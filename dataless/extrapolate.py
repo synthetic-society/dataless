@@ -24,7 +24,24 @@ class AbstractExtrapolation(ABC):
         Args:
             training_data: DataFrame containing training samples
         """
-        pass
+
+    def validate_training_data(self, dd: pd.DataFrame) -> None:
+        """
+        Validate the training data.
+
+        Args:
+            dd: DataFrame containing training data
+
+        Raises:
+            ValueError: If training data is invalid
+        """
+        if not isinstance(dd, pd.DataFrame):
+            raise ValueError("Training data must be a DataFrame")
+        if not all(col in dd.columns for col in ['n', 'κ']):
+            raise ValueError("Training data must have columns 'n' and 'κ'")
+        
+        if len(dd) < 3:
+            raise ValueError("Training data must have at least 3 samples")
     
     @classmethod
     @abstractmethod
@@ -38,12 +55,10 @@ class AbstractExtrapolation(ABC):
         Returns:
             Callable: Loss function for optimization
         """
-        pass
       
     @abstractmethod
     def train(self) -> None:
         """Train the model on the provided training data."""
-        pass
     
     @abstractmethod
     def test(self, n: Union[int, ndarray]):
@@ -56,7 +71,6 @@ class AbstractExtrapolation(ABC):
         Returns:
             ndarray: Predicted values for the given sample sizes
         """
-        pass
 
 
 class PYPExtrapolation(AbstractExtrapolation):
@@ -76,6 +90,8 @@ class PYPExtrapolation(AbstractExtrapolation):
             training_data: DataFrame with columns 'n' (sample sizes) and 'κ' (observations)
         """
         self.training_data = training_data
+        self.validate_training_data(training_data)
+
         self.train()
 
     @staticmethod
@@ -118,7 +134,9 @@ class PYPExtrapolation(AbstractExtrapolation):
         Returns:
             ndarray: Predicted correctness values
         """
-        return PYP(h=self.h, γ=self.γ).correctness(n)
+        n_array = np.atleast_1d(n)
+        result = PYP(h=self.h, γ=self.γ).correctness(n_array)
+        return result[0] if np.isscalar(n) else result
 
 
 class FLExtrapolation(AbstractExtrapolation):
@@ -128,7 +146,7 @@ class FLExtrapolation(AbstractExtrapolation):
     This model provides a simpler alternative to PYP extrapolation,
     using only entropy-based calculations.
     """
-    INIT_STATE = 12  # Initial entropy value for optimization
+    INIT_STATE = [12.0]  # Initial entropy value for optimization
 
     def __init__(self, training_data):
         """
@@ -138,6 +156,8 @@ class FLExtrapolation(AbstractExtrapolation):
             training_data: DataFrame with columns 'n' and 'κ'
         """
         self.training_data = training_data
+        self.validate_training_data(training_data)
+
         self.train()
 
     @classmethod
@@ -155,7 +175,7 @@ class FLExtrapolation(AbstractExtrapolation):
         emp_κ = dd['κ'].to_numpy()
 
         def loss_fun(x):
-            expected_κ = FLModel(h=x).correctness(n_range)
+            expected_κ = FLModel(h=float(x[0])).correctness(n_range)
             return (np.log(n_range) * (expected_κ - emp_κ)**2).mean()
 
         return loss_fun
@@ -167,8 +187,8 @@ class FLExtrapolation(AbstractExtrapolation):
         Uses Nelder-Mead optimization to find optimal entropy value.
         """
         loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, type(self).INIT_STATE, method='Nelder-Mead')
-        self.h = res.x
+        res = minimize(loss_function, self.INIT_STATE, method='Nelder-Mead')
+        self.h = float(res.x[0])
 
     def test(self, n):
         """
@@ -180,7 +200,9 @@ class FLExtrapolation(AbstractExtrapolation):
         Returns:
             ndarray: Predicted correctness values
         """
-        return FLModel(h=self.h).correctness(n)
+        n_array = np.atleast_1d(n)
+        result = FLModel(h=self.h).correctness(n_array)
+        return result[0] if np.isscalar(n) else result
 
 
 class ExpDecayExtrapolation(AbstractExtrapolation):
@@ -198,6 +220,8 @@ class ExpDecayExtrapolation(AbstractExtrapolation):
             training_data: DataFrame with columns 'n' and 'κ'
         """
         self.training_data = training_data
+        self.validate_training_data(training_data)
+
         self.train()
       
     @staticmethod
@@ -255,7 +279,9 @@ class ExpDecayExtrapolation(AbstractExtrapolation):
         Returns:
             ndarray: Predicted correctness values, clipped to [0,1]
         """
-        return np.clip(type(self).correctness(self.a, self.b, n), 0, 1)
+        n_array = np.atleast_1d(n)
+        result = np.clip(type(self).correctness(self.a, self.b, n_array), 0, 1)
+        return result[0] if np.isscalar(n) else result
 
 
 class PolynomialExtrapolation(AbstractExtrapolation):
@@ -273,6 +299,8 @@ class PolynomialExtrapolation(AbstractExtrapolation):
             training_data: DataFrame with columns 'n' and 'κ'
         """
         self.training_data = training_data
+        self.validate_training_data(training_data)
+
         self.train()
 
     @staticmethod
@@ -331,4 +359,6 @@ class PolynomialExtrapolation(AbstractExtrapolation):
         Returns:
             ndarray: Predicted correctness values, clipped to [0,1]
         """
-        return np.clip(type(self).correctness(self.a, self.b, self.c, n), 0, 1)
+        n_array = np.atleast_1d(n)
+        result = np.clip(type(self).correctness(self.a, self.b, self.c, n_array), 0, 1)
+        return result[0] if np.isscalar(n) else result

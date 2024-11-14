@@ -27,7 +27,12 @@ def empirical_entropy(arr : np.ndarray, base=np.e) -> float:
 
     Returns:
         float: Empirical entropy value
+
+    Raises:
+        ValueError: If input array is empty
     """
+    if len(arr) == 0:
+        raise ValueError("Cannot compute entropy of empty array")
     freqs = frequencies(arr)
     return sstats.entropy(freqs / len(arr), base=base)
 
@@ -67,8 +72,16 @@ def uniqueness(freqs : np.ndarray) -> float:
 
     Returns:
         float: Empirical uniqueness value in [0,1]
+
+    Raises:
+        ValueError: If input array is empty
     """
-    return (freqs == 1).sum() / freqs.sum()
+    if len(freqs) == 0:
+        raise ValueError("Cannot compute uniqueness of empty array")
+    total = freqs.sum()
+    if total == 0:
+        raise ValueError("Total frequency count cannot be zero")
+    return (freqs == 1).sum() / total
 
 
 def correctness(freqs : np.ndarray) -> float:
@@ -82,5 +95,13 @@ def correctness(freqs : np.ndarray) -> float:
 
     Returns:
         float: Empirical correctness value in [0,1]
+
+    Raises:
+        ValueError: If input array is empty
     """
-    return len(freqs) / freqs.sum()
+    if len(freqs) == 0:
+        raise ValueError("Cannot compute correctness of empty array")
+    total = freqs.sum()
+    if total == 0:
+        raise ValueError("Total frequency count cannot be zero")
+    return len(freqs) / total

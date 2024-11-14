@@ -180,17 +180,14 @@ class AbstractModel(ABC):
     @abstractmethod
     def correctness(self, n: UnionInt) -> npt.NDArray[np.float64]:
         """Calculate expected correctness for sample size n."""
-        pass
     
     @abstractmethod
     def uniqueness(self, n: UnionInt) -> npt.NDArray[np.float64]:
         """Calculate expected uniqueness for sample size n."""
-        pass
       
     @abstractmethod
     def kanon_violations(self, n: UnionInt) -> npt.NDArray[np.float64]:
         """Calculate expected k-anonymity violations for sample size n."""
-        pass
     
   
 class PYP(AbstractModel):

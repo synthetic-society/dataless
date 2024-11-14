@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [test, test-py310, test-py311, test-py312]
     steps:
       - uses: actions/checkout@v4
       
@@ -16,9 +19,10 @@ jobs:
         with:
           pixi-version: v0.35.0
           cache: true
+          environments: ${{ matrix.environment }}
       
       - name: Run tests with coverage
-        run: pixi run test
+        run: pixi run -e ${{ matrix.environment }} test
       
       # - name: Upload coverage to Codecov
         # uses: codecov/codecov-action@v4

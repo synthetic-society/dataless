@@ -124,6 +124,10 @@ docs/_build/
 .pybuilder/
 target/
 
+# Pixi
+
+.pixi
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

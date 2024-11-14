@@ -5,7 +5,13 @@ import scipy.stats as sstats
 
 def frequencies(arr : np.ndarray) -> np.ndarray:
     """
-    Return the sorted frequencies of a numpy 1D array.
+    Calculate the sorted frequencies of unique elements in an array.
+
+    Args:
+        arr: 1D numpy array of observations
+
+    Returns:
+        ndarray: Sorted array of frequencies
     """
     freqs = np.unique(arr, return_counts=True)[1]
     return np.sort(freqs)
@@ -13,8 +19,14 @@ def frequencies(arr : np.ndarray) -> np.ndarray:
 
 def empirical_entropy(arr : np.ndarray, base=np.e) -> float:
     """
-    Return the empirical entropy of a numpy 1D array,
-    according to a given base (default: e).
+    Calculate the empirical (biased) entropy of a sample.
+
+    Args:
+        arr: 1D numpy array of observations
+        base: Base for the logarithm (default: e for natural logarithm)
+
+    Returns:
+        float: Empirical entropy value
     """
     freqs = frequencies(arr)
     return sstats.entropy(freqs / len(arr), base=base)
@@ -22,8 +34,18 @@ def empirical_entropy(arr : np.ndarray, base=np.e) -> float:
 
 def counts_from_dataframe(df : pd.DataFrame) -> np.ndarray:
     """
-    Return the sorted frequencies from a pandas Dataframe
-    (the frequencies of unique rows).
+    Calculate frequencies of unique rows in a DataFrame.
+
+    The function has been optimized for speed by converting the DataFrame
+    to a contiguous array of bytes and then counting the frequencies of
+    unique rows. This is much faster than counting the frequencies of
+    individual rows in the DataFrame.
+
+    Args:
+        df: pandas DataFrame where each row is an observation
+
+    Returns:
+        ndarray: Sorted array of frequencies for unique rows
     """
     arr = df.values
     shape_row = arr.shape[1]
@@ -34,10 +56,31 @@ def counts_from_dataframe(df : pd.DataFrame) -> np.ndarray:
 
 
 def uniqueness(freqs : np.ndarray) -> float:
-    """ Return the average uniqueness from a vector of frequencies. """
+    """
+    Calculate the empirical uniqueness from frequency counts.
+
+    Uniqueness is defined as the proportion of observations that appear
+    exactly once in the sample.
+
+    Args:
+        freqs: Array of frequency counts
+
+    Returns:
+        float: Empirical uniqueness value in [0,1]
+    """
     return (freqs == 1).sum() / freqs.sum()
 
 
 def correctness(freqs : np.ndarray) -> float:
-    """ Return the average correctness from a vector of frequencies. """
+    """
+    Calculate the empirical correctness from frequency counts.
+
+    Correctness is calculated as the ratio of unique frequencies to total observations.
+
+    Args:
+        freqs: Array of frequency counts
+
+    Returns:
+        float: Empirical correctness value in [0,1]
+    """
     return len(freqs) / freqs.sum()

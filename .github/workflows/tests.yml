@@ -16,8 +16,13 @@ jobs:
         with:
           pixi-version: v0.35.0
           cache: true
-          auth-host: prefix.dev
-          auth-token: ${{ secrets.PREFIX_DEV_TOKEN }}
       
-      - name: Run tests
+      - name: Run tests with coverage
         run: pixi run test
+      
+      # - name: Upload coverage to Codecov
+        # uses: codecov/codecov-action@v4
+        # with:
+        #   file: ./coverage.xml
+        #   fail_ci_if_error: true
+        #   token: ${{ secrets.CODECOV_TOKEN }}

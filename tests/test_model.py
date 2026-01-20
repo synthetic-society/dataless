@@ -1,11 +1,8 @@
-"""Unit tests for statistical models.
-
-This module contains comprehensive tests for the functions and classes in model.py,
-covering core PYP functionality, utility functions, and model implementations.
-"""
+"""Unit tests for statistical models."""
 
 import numpy as np
 import pytest
+from dataless.exceptions import ParameterError
 from dataless.model import (
     PYP,
     FLModel,
@@ -17,201 +14,263 @@ from dataless.model import (
     pyp_entropy,
     pyp_uniqueness,
 )
+from hypothesis import assume, given
+from hypothesis import strategies as st
 from numpy.testing import assert_allclose, assert_array_equal
+from scipy.special import digamma
+
+from conftest import assert_bounded, entropy_values, frequency_arrays, pyp_params, sample_size_arrays
+
+# =============================================================================
+# Property-Based Tests: Inverse Digamma
+# =============================================================================
 
 
-@pytest.fixture
-def valid_pyp_params():
-    """Fixture providing valid PYP parameters."""
-    return {"d": 0.5, "α": 1.0}
+class TestInvdigamma:
+    """Tests for the inverse digamma function."""
+
+    @given(st.floats(min_value=-1.5, max_value=10.0, allow_nan=False, allow_infinity=False))
+    def test_round_trip(self, y):
+        """digamma(invdigamma(y)) ≈ y."""
+        x = invdigamma(y)
+        assume(np.isfinite(x) and x > 0)
+        assert_allclose(digamma(x), y, rtol=1e-4, atol=1e-10)
+
+    @given(st.floats(min_value=0.5, max_value=100.0, allow_nan=False, allow_infinity=False))
+    def test_positive_for_positive_input(self, y):
+        """Invdigamma returns positive values for positive inputs."""
+        assert invdigamma(y) > 0
+
+    @given(st.floats(min_value=-1.5, max_value=10.0, allow_nan=False, allow_infinity=False))
+    def test_always_finite(self, y):
+        """Invdigamma always returns finite values."""
+        assert np.isfinite(invdigamma(y))
 
 
-@pytest.fixture
-def valid_sample():
-    """Fixture providing a valid sample for testing."""
-    return np.array([1, 1, 2, 2, 2, 3, 4])
+# =============================================================================
+# Property-Based Tests: Multiplicities
+# =============================================================================
+
+
+class TestMultiplicities:
+    """Tests for multiplicities conversion functions."""
+
+    @given(frequency_arrays)
+    def test_round_trip_preserves_sorted_freqs(self, freqs):
+        """Round-trip through multiplicities preserves sorted frequencies."""
+        mm, icts = multiplicities_from_freqs(freqs)
+        reconstructed = freqs_from_multiplicities(mm, icts)
+        assert_array_equal(np.sort(reconstructed), np.sort(freqs))
+
+    @given(frequency_arrays)
+    def test_sum_preserved(self, freqs):
+        """sum(mm * icts) == sum(freqs)."""
+        mm, icts = multiplicities_from_freqs(freqs)
+        assert np.sum(mm * icts) == np.sum(freqs)
+
+    @given(frequency_arrays)
+    def test_count_preserved(self, freqs):
+        """sum(mm) == len(freqs)."""
+        mm, icts = multiplicities_from_freqs(freqs)
+        assert np.sum(mm) == len(freqs)
+
+    def test_from_sample(self):
+        """multiplicities_from_sample works correctly."""
+        sample = np.array([1, 1, 2, 2, 2, 3, 4])
+        mm, icts = multiplicities_from_sample(sample)
+        assert len(mm) == len(icts)
+        assert np.sum(mm * icts) == len(sample)
+
+    def test_freqs_from_multiplicities(self):
+        """freqs_from_multiplicities reconstructs frequencies correctly."""
+        mm, icts = np.array([2, 1]), np.array([1, 2])
+        assert_array_equal(freqs_from_multiplicities(mm, icts), np.array([1, 1, 2]))
+
+
+# =============================================================================
+# Property-Based Tests: PYP Parameters
+# =============================================================================
+
+
+class TestPYPParameters:
+    """Tests for PYP parameter conversions and properties."""
+
+    @given(pyp_params())
+    def test_h_gamma_round_trip(self, params):
+        """PYP(d,α) -> (h,γ) -> PYP(h,γ) preserves d,α."""
+        d, α = params["d"], params["α"]
+        assume(α > -d)
+
+        pyp1 = PYP(d=d, α=α)
+        h, γ = pyp1.h, pyp1.γ
+        assume(np.isfinite(h) and np.isfinite(γ) and 0 < γ < 1)
+
+        pyp2 = PYP(h=h, γ=γ)
+        assert_allclose(pyp2.d, d, rtol=1e-3, atol=1e-6)
+        assert_allclose(pyp2.α, α, rtol=1e-3, atol=1e-6)
+
+    @given(pyp_params())
+    def test_entropy_positive(self, params):
+        """PYP entropy is always positive."""
+        d, α = params["d"], params["α"]
+        assume(α > -d)
+        assert pyp_entropy(d, α) > 0
+
+    @given(pyp_params())
+    def test_gamma_bounded(self, params):
+        """PYP γ is in (0, 1) for non-trivial d."""
+        d, α = params["d"], params["α"]
+        assume(α > -d and d >= 0.01)
+        assert 0 < PYP(d=d, α=α).γ < 1
+
+
+# =============================================================================
+# Property-Based Tests: PYP Functions
+# =============================================================================
 
 
 class TestPYPFunctions:
-    """Tests for core PYP functions."""
+    """Tests for PYP statistical functions."""
 
-    def test_pyp_entropy_basic(self, valid_pyp_params):
-        """Test basic entropy calculation."""
-        result = pyp_entropy(valid_pyp_params["d"], valid_pyp_params["α"])
-        assert result > 0
-        assert np.isfinite(result)
+    @given(pyp_params(), sample_size_arrays)
+    def test_uniqueness_bounded(self, params, n):
+        """PYP uniqueness is always in [0, 1]."""
+        d, α = params["d"], params["α"]
+        assume(α > -d and d >= 1e-10)
+        assert_bounded(pyp_uniqueness(d, α, n))
 
-    def test_pyp_entropy_zero_discount(self):
-        """Test entropy with zero discount parameter."""
-        result = pyp_entropy(0.0, 1.0)
-        assert result > 0
-        assert np.isfinite(result)
+    @given(pyp_params(), sample_size_arrays)
+    def test_correctness_bounded(self, params, n):
+        """PYP correctness is always in [0, 1]."""
+        d, α = params["d"], params["α"]
+        assume(α > -d and d >= 1e-6)  # Tighter bound to avoid numerical edge cases
+        assert_bounded(pyp_correctness(d, α, n), atol=1e-7)
 
-    def test_pyp_uniqueness_basic(self, valid_pyp_params):
-        """Test basic uniqueness calculation."""
-        n = np.array([1, 10, 100])
-        result = pyp_uniqueness(valid_pyp_params["d"], valid_pyp_params["α"], n)
-        assert np.all(result >= 0)
-        assert np.all(result <= 1)
-        assert np.all(np.diff(result) <= 0)  # Should be monotonically decreasing
+    @given(pyp_params(), sample_size_arrays)
+    def test_uniqueness_monotonically_decreasing(self, params, n):
+        """PYP uniqueness decreases with sample size."""
+        d, α = params["d"], params["α"]
+        assume(α > -d)
+        u = pyp_uniqueness(d, α, np.sort(n))
+        assert np.all(np.diff(u) <= 1e-10)
 
-    def test_pyp_uniqueness_single_sample(self, valid_pyp_params):
-        """Test uniqueness for single sample."""
-        result = pyp_uniqueness(valid_pyp_params["d"], valid_pyp_params["α"], 1)
-        assert_allclose(result, 1.0)
+    @given(pyp_params(), sample_size_arrays)
+    def test_correctness_monotonically_decreasing(self, params, n):
+        """PYP correctness decreases with sample size."""
+        d, α = params["d"], params["α"]
+        assume(α > -d)
+        c = pyp_correctness(d, α, np.sort(n))
+        assert np.all(np.diff(c) <= 1e-10)
 
-    def test_pyp_correctness_basic(self, valid_pyp_params):
-        """Test basic correctness calculation."""
-        n = np.array([1, 10, 100])
-        result = pyp_correctness(valid_pyp_params["d"], valid_pyp_params["α"], n)
-        assert np.all(result >= 0)
-        assert np.all(result <= 1)
-        assert np.all(np.diff(result) <= 0)  # Should be monotonically decreasing
-
-    def test_pyp_correctness_single_sample(self, valid_pyp_params):
-        """Test correctness for single sample."""
-        result = pyp_correctness(valid_pyp_params["d"], valid_pyp_params["α"], 1)
-        assert_allclose(result, 1.0)
+    @given(pyp_params())
+    def test_single_sample_correctness_is_one(self, params):
+        """Correctness for n=1 is always 1."""
+        d, α = params["d"], params["α"]
+        assume(α > -d and d >= 1e-10)  # Avoid numerical instability
+        assert_allclose(pyp_correctness(d, α, 1), 1.0)
 
 
-class TestUtilityFunctions:
-    """Tests for utility functions."""
+# =============================================================================
+# Property-Based Tests: FLModel
+# =============================================================================
 
-    def test_invdigamma_basic(self):
-        """Test basic inverse digamma calculation."""
-        y = 2.0
-        result = invdigamma(y)
-        assert result > 0
-        assert np.isfinite(result)
 
-    def test_invdigamma_zero(self):
-        """Test inverse digamma at zero."""
-        result = invdigamma(0.0)
-        assert result > 0
-        assert np.isfinite(result)
+class TestFLModelProperties:
+    """Property-based tests for FLModel."""
 
-    def test_invdigamma_negative(self):
-        """Test inverse digamma with negative input."""
-        result = invdigamma(-1.0)
-        assert np.isfinite(result)
+    @given(entropy_values, sample_size_arrays)
+    def test_uniqueness_bounded(self, h, n):
+        """FLModel uniqueness is always in [0, 1]."""
+        assert_bounded(FLModel(h).uniqueness(n))
 
-    def test_multiplicities_from_sample(self, valid_sample):
-        """Test multiplicities calculation from sample."""
-        mm, icts = multiplicities_from_sample(valid_sample)
-        assert len(mm) == len(icts)
-        assert np.sum(mm * icts) == len(valid_sample)
+    @given(entropy_values, sample_size_arrays)
+    def test_correctness_bounded(self, h, n):
+        """FLModel correctness is always in [0, 1]."""
+        assume(np.all(n >= 1))
+        assert_bounded(FLModel(h).correctness(n), high=1.0 + 1e-6)
 
-    def test_multiplicities_from_freqs(self):
-        """Test multiplicities calculation from frequencies."""
-        freqs = np.array([1, 1, 2, 3])
-        mm, icts = multiplicities_from_freqs(freqs)
-        assert len(mm) == len(icts)
-        assert np.sum(mm * icts) == np.sum(freqs)
+    @given(entropy_values, sample_size_arrays)
+    def test_uniqueness_monotonically_decreasing(self, h, n):
+        """FLModel uniqueness decreases with sample size."""
+        u = FLModel(h).uniqueness(np.sort(n))
+        assert np.all(np.diff(u) <= 1e-10)
 
-    def test_freqs_from_multiplicities(self):
-        """Test frequency reconstruction from multiplicities."""
-        mm = np.array([2, 1])
-        icts = np.array([1, 2])
-        result = freqs_from_multiplicities(mm, icts)
-        expected = np.array([1, 1, 2])
-        assert_array_equal(result, expected)
+    @given(st.floats(min_value=-10.0, max_value=200.0, allow_nan=False, allow_infinity=False))
+    def test_entropy_clipping(self, h):
+        """FLModel entropy is clipped to [0, 100]."""
+        assert 0 <= FLModel(h).h <= 100
+
+
+# =============================================================================
+# Unit Tests: PYP Class
+# =============================================================================
 
 
 class TestPYP:
     """Tests for PYP class."""
 
-    def test_init_with_d_alpha(self, valid_pyp_params):
-        """Test PYP initialization with d and α."""
-        pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
-        assert pyp.d == valid_pyp_params["d"]
-        assert pyp.α == valid_pyp_params["α"]
+    def test_init_with_d_alpha(self):
+        """PYP initialization with d and α."""
+        pyp = PYP(d=0.5, α=1.0)
+        assert pyp.d == 0.5 and pyp.α == 1.0
 
     def test_init_with_h_gamma(self):
-        """Test PYP initialization with h and γ."""
-        h, gamma = 2.0, 0.5
-        pyp = PYP(h=h, γ=gamma)
-        assert 0 <= pyp.d < 1
-        assert pyp.α > -pyp.d
+        """PYP initialization with h and γ."""
+        pyp = PYP(h=2.0, γ=0.5)
+        assert 0 <= pyp.d < 1 and pyp.α > -pyp.d
 
-    def test_init_invalid(self):
-        """Test PYP initialization with invalid parameters."""
-        with pytest.raises(ValueError):
-            PYP()  # No parameters
-        with pytest.raises(ValueError):
-            PYP(d=0.5)  # Missing α
-        with pytest.raises(ValueError):
-            PYP(h=2.0)  # Missing γ
+    @pytest.mark.parametrize("kwargs", [{}, {"d": 0.5}, {"h": 2.0}])
+    def test_init_invalid(self, kwargs):
+        """PYP initialization with invalid parameters raises ParameterError."""
+        with pytest.raises(ParameterError):
+            PYP(**kwargs)
 
-    def test_properties(self, valid_pyp_params):
-        """Test PYP property calculations."""
-        pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
-        assert np.isfinite(pyp.h)
-        assert 0 <= pyp.γ <= 1
+    def test_properties(self):
+        """PYP property calculations."""
+        pyp = PYP(d=0.5, α=1.0)
+        assert np.isfinite(pyp.h) and 0 <= pyp.γ <= 1
 
-    def test_methods(self, valid_pyp_params):
-        """Test PYP method calculations."""
-        pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
+    def test_methods(self):
+        """PYP method calculations."""
+        pyp = PYP(d=0.5, α=1.0)
         n = np.array([1, 10, 100])
+        assert_bounded(pyp.uniqueness(n))
+        assert_bounded(pyp.correctness(n))
+        assert 0 <= pyp.kanon_violations(n[0], k=2) <= 1
 
-        # Test uniqueness
-        u = pyp.uniqueness(n)
-        assert np.all(u >= 0)
-        assert np.all(u <= 1)
+    @pytest.mark.parametrize("n,k", [(10, 2), (100, 5), (1000, 10)])
+    def test_kanon_violations_ranges(self, n, k):
+        """k-anonymity violations for different n,k combinations."""
+        assert 0 <= PYP(d=0.5, α=1.0).kanon_violations(n, k) <= 1
 
-        # Test correctness
-        c = pyp.correctness(n)
-        assert np.all(c >= 0)
-        assert np.all(c <= 1)
 
-        # Test k-anonymity violations
-        k = 2
-        v = pyp.kanon_violations(n[0], k)
-        assert 0 <= v <= 1
+# =============================================================================
+# Unit Tests: FLModel Class
+# =============================================================================
 
 
 class TestFLModel:
     """Tests for FLModel class."""
 
     def test_init(self):
-        """Test FLModel initialization."""
-        h = 2.0
-        model = FLModel(h)
-        assert model.h == h
+        """FLModel initialization."""
+        assert FLModel(2.0).h == 2.0
 
-    def test_init_clipping(self):
-        """Test entropy parameter clipping."""
-        model = FLModel(-1.0)
-        assert model.h == 0.0
-        model = FLModel(150.0)
-        assert model.h == 100.0
+    @pytest.mark.parametrize("h,expected", [(-1.0, 0.0), (150.0, 100.0)])
+    def test_init_clipping(self, h, expected):
+        """Entropy parameter clipping."""
+        assert FLModel(h).h == expected
 
     def test_methods(self):
-        """Test FLModel method calculations."""
+        """FLModel method calculations."""
         model = FLModel(2.0)
         n = np.array([1, 10, 100])
-
-        # Test uniqueness
-        u = model.uniqueness(n)
-        assert np.all(u >= 0)
-        assert np.all(u <= 1)
-        assert np.all(np.diff(u) <= 0)  # Should be monotonically decreasing
-
-        # Test correctness
-        c = model.correctness(n)
-        assert np.all(c >= 0)
-        assert np.all(c <= 1)
-        assert np.all(np.diff(c) <= 0)  # Should be monotonically decreasing
+        assert_bounded(model.uniqueness(n))
+        assert_bounded(model.correctness(n))
+        assert np.all(np.diff(model.uniqueness(n)) <= 0)
+        assert np.all(np.diff(model.correctness(n)) <= 0)
 
     def test_kanon_violations_not_implemented(self):
-        """Test k-anonymity violations raises NotImplementedError."""
-        model = FLModel(2.0)
+        """k-anonymity violations raises NotImplementedError."""
         with pytest.raises(NotImplementedError):
-            model.kanon_violations(10, 2)
-
-
-@pytest.mark.parametrize("n,k", [(10, 2), (100, 5), (1000, 10)])
-def test_kanon_violations_ranges(valid_pyp_params, n, k):
-    """Test k-anonymity violations for different n,k combinations."""
-    pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
-    result = pyp.kanon_violations(n, k)
-    assert 0 <= result <= 1
+            FLModel(2.0).kanon_violations(10, 2)

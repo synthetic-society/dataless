@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+import warnings
 
 import numpy as np
 import pandas as pd
 from numpy import ndarray
 from scipy.optimize import minimize
 
+from .exceptions import OptimizationWarning, TrainingDataError
 from .model import PYP, FLModel
 
 
@@ -32,16 +34,22 @@ class AbstractExtrapolation(ABC):
             dd: DataFrame containing training data
 
         Raises:
-            ValueError: If training data is invalid
+            TrainingDataError: If training data is invalid
 
         """
         if not isinstance(dd, pd.DataFrame):
-            raise ValueError("Training data must be a DataFrame")
+            raise TrainingDataError("Training data must be a DataFrame")
         if not all(col in dd.columns for col in ["n", "κ"]):
-            raise ValueError("Training data must have columns 'n' and 'κ'")
+            raise TrainingDataError("Training data must have columns 'n' and 'κ'")
 
         if len(dd) < 3:
-            raise ValueError("Training data must have at least 3 samples")
+            raise TrainingDataError("Training data must have at least 3 samples")
+
+        if not all(dd["κ"].between(0, 1)):
+            raise TrainingDataError("All κ values must be between 0 and 1")
+
+        if not all(dd["n"] > 0):
+            raise TrainingDataError("All n values must be positive")
 
     @classmethod
     @abstractmethod
@@ -61,14 +69,40 @@ class AbstractExtrapolation(ABC):
         """Train the model on the provided training data."""
 
     @abstractmethod
-    def test(self, n: int | ndarray):
-        """Make predictions for new sample sizes.
+    def predict(self, n: int | ndarray) -> ndarray:
+        """Predict values for new sample sizes.
 
         Args:
             n: Sample size or array of sample sizes
 
         Returns:
             ndarray: Predicted values for the given sample sizes
+
+        """
+
+    def test(self, n: int | ndarray) -> ndarray:
+        """Deprecated: Use predict() instead.
+
+        Args:
+            n: Sample size or array of sample sizes
+
+        Returns:
+            ndarray: Predicted values for the given sample sizes
+
+        """
+        warnings.warn(
+            "test() is deprecated and will be removed in a future version. Use predict() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.predict(n)
+
+    @abstractmethod
+    def summary(self) -> str:
+        """Return a human-readable summary of the fitted model.
+
+        Returns:
+            str: Model summary including parameters and training info
 
         """
 
@@ -109,8 +143,15 @@ class PYPExtrapolation(AbstractExtrapolation):
         emp_κ = dd["κ"].values
 
         def loss_fun(x):
-            expected_κ = PYP(h=x[0], γ=x[1]).correctness(n_range)
-            return (np.log(n_range) * (expected_κ - emp_κ) ** 2).mean()
+            # Return large value for invalid parameter combinations during optimization
+            h, γ = x[0], x[1]
+            if h <= 0 or γ < 0 or γ > 1:
+                return 1e10
+            try:
+                expected_κ = PYP(h=h, γ=γ).correctness(n_range)
+                return (np.log(n_range) * (expected_κ - emp_κ) ** 2).mean()
+            except Exception:
+                return 1e10
 
         return loss_fun
 
@@ -118,12 +159,23 @@ class PYPExtrapolation(AbstractExtrapolation):
         """Train the model by optimizing PYP parameters.
 
         Uses Nelder-Mead optimization to find optimal h and γ values.
+
+        Warns:
+            OptimizationWarning: If optimization does not converge (as warning)
+
         """
         loss_function = type(self).make_loss_fun(self.training_data)
         res = minimize(loss_function, type(self).INIT_STATE, method="Nelder-Mead")
+        if not res.success:
+            warnings.warn(
+                f"Optimization did not converge: {res.message}",
+                OptimizationWarning,
+                stacklevel=2,
+            )
         self.h, self.γ = res.x
+        self._optimization_result = res
 
-    def test(self, n: int | ndarray) -> ndarray:
+    def predict(self, n: int | ndarray) -> ndarray:
         """Predict correctness values for new sample sizes.
 
         Args:
@@ -136,6 +188,23 @@ class PYPExtrapolation(AbstractExtrapolation):
         n_array = np.atleast_1d(n)
         result = PYP(h=self.h, γ=self.γ).correctness(n_array)
         return result[0] if np.isscalar(n) else result
+
+    def summary(self) -> str:
+        """Return a human-readable summary of the fitted model.
+
+        Returns:
+            str: Model summary including parameters and training info
+
+        """
+        n_min = self.training_data["n"].min()
+        n_max = self.training_data["n"].max()
+        return (
+            f"PYP Extrapolation Model\n"
+            f"=======================\n"
+            f"Parameters: h={self.h:.4f}, γ={self.γ:.4f}\n"
+            f"Training points: {len(self.training_data)}\n"
+            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
+        )
 
 
 class FLExtrapolation(AbstractExtrapolation):
@@ -186,9 +255,16 @@ class FLExtrapolation(AbstractExtrapolation):
         """
         loss_function = type(self).make_loss_fun(self.training_data)
         res = minimize(loss_function, self.INIT_STATE, method="Nelder-Mead")
+        if not res.success:
+            warnings.warn(
+                f"Optimization did not converge: {res.message}",
+                OptimizationWarning,
+                stacklevel=2,
+            )
         self.h = float(res.x[0])
+        self._optimization_result = res
 
-    def test(self, n):
+    def predict(self, n):
         """Predict correctness values for new sample sizes.
 
         Args:
@@ -201,6 +277,23 @@ class FLExtrapolation(AbstractExtrapolation):
         n_array = np.atleast_1d(n)
         result = FLModel(h=self.h).correctness(n_array)
         return result[0] if np.isscalar(n) else result
+
+    def summary(self) -> str:
+        """Return a human-readable summary of the fitted model.
+
+        Returns:
+            str: Model summary including parameters and training info
+
+        """
+        n_min = self.training_data["n"].min()
+        n_max = self.training_data["n"].max()
+        return (
+            f"FL Extrapolation Model\n"
+            f"======================\n"
+            f"Parameters: h={self.h:.4f}\n"
+            f"Training points: {len(self.training_data)}\n"
+            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
+        )
 
 
 class ExpDecayExtrapolation(AbstractExtrapolation):
@@ -264,9 +357,16 @@ class ExpDecayExtrapolation(AbstractExtrapolation):
         """
         loss_function = type(self).make_loss_fun(self.training_data)
         res = minimize(loss_function, (1, 1), method="Nelder-Mead")
+        if not res.success:
+            warnings.warn(
+                f"Optimization did not converge: {res.message}",
+                OptimizationWarning,
+                stacklevel=2,
+            )
         self.a, self.b = res.x
+        self._optimization_result = res
 
-    def test(self, n):
+    def predict(self, n):
         """Predict correctness values for new sample sizes.
 
         Args:
@@ -279,6 +379,23 @@ class ExpDecayExtrapolation(AbstractExtrapolation):
         n_array = np.atleast_1d(n)
         result = np.clip(type(self).correctness(self.a, self.b, n_array), 0, 1)
         return result[0] if np.isscalar(n) else result
+
+    def summary(self) -> str:
+        """Return a human-readable summary of the fitted model.
+
+        Returns:
+            str: Model summary including parameters and training info
+
+        """
+        n_min = self.training_data["n"].min()
+        n_max = self.training_data["n"].max()
+        return (
+            f"Exponential Decay Extrapolation Model\n"
+            f"=====================================\n"
+            f"Parameters: a={self.a:.4f}, b={self.b:.4f}\n"
+            f"Training points: {len(self.training_data)}\n"
+            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
+        )
 
 
 class PolynomialExtrapolation(AbstractExtrapolation):
@@ -343,9 +460,16 @@ class PolynomialExtrapolation(AbstractExtrapolation):
         """
         loss_function = type(self).make_loss_fun(self.training_data)
         res = minimize(loss_function, (0, -1, -1), method="Nelder-Mead")
+        if not res.success:
+            warnings.warn(
+                f"Optimization did not converge: {res.message}",
+                OptimizationWarning,
+                stacklevel=2,
+            )
         self.a, self.b, self.c = res.x
+        self._optimization_result = res
 
-    def test(self, n):
+    def predict(self, n):
         """Predict correctness values for new sample sizes.
 
         Args:
@@ -358,3 +482,20 @@ class PolynomialExtrapolation(AbstractExtrapolation):
         n_array = np.atleast_1d(n)
         result = np.clip(type(self).correctness(self.a, self.b, self.c, n_array), 0, 1)
         return result[0] if np.isscalar(n) else result
+
+    def summary(self) -> str:
+        """Return a human-readable summary of the fitted model.
+
+        Returns:
+            str: Model summary including parameters and training info
+
+        """
+        n_min = self.training_data["n"].min()
+        n_max = self.training_data["n"].max()
+        return (
+            f"Polynomial Extrapolation Model\n"
+            f"==============================\n"
+            f"Parameters: a={self.a:.4f}, b={self.b:.4f}, c={self.c:.4f}\n"
+            f"Training points: {len(self.training_data)}\n"
+            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
+        )

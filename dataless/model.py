@@ -6,6 +6,8 @@ from scipy import integrate
 from scipy.special import beta, digamma, gammaln, polygamma
 from scipy.stats import binom
 
+from .exceptions import ParameterError
+
 UnionInt = npt.NDArray[np.int_] | int
 
 
@@ -56,8 +58,9 @@ def pyp_correctness(d, α, n: UnionInt):
 
     nom = np.exp(gammaln(1 + α) - gammaln(d + α) + gammaln(n + d + α) - gammaln(n + α)) - α
 
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return np.where(n <= 1, 1.0, np.where(d == 0.0, rv_null_d, np.divide(nom, (n * d))))
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        # Use rv_null_d formula when d is very small to avoid numerical instability
+        return np.where(n <= 1, 1.0, np.where(d <= 1e-10, rv_null_d, np.divide(nom, (n * d))))
 
 
 @np.vectorize
@@ -194,6 +197,19 @@ class PYP(AbstractModel):
     The Pitman-Yor Process is a generalization of the Dirichlet Process,
     providing more flexible modeling of power-law behavior in the tail of
     the distribution.
+
+    Args:
+        d: Discount parameter (0 ≤ d < 1)
+        α: Concentration parameter (α > -d)
+        h: Entropy parameter (in nats)
+        γ: Power-law exponent
+
+    Note:
+        Must provide either (d, α) or (h, γ) pair.
+
+    Raises:
+        ParameterError: If parameters are invalid or constraints violated.
+
     """
 
     def __init__(
@@ -207,17 +223,26 @@ class PYP(AbstractModel):
             h: Entropy parameter (in nats)
             γ: Power-law exponent
 
-        Note: Must provide either (d, α) or (h, γ) pair
+        Raises:
+            ParameterError: If parameters are invalid
 
         """
         if d is not None and α is not None:
+            if not (0 <= d < 1):
+                raise ParameterError(f"Discount parameter d must be in [0, 1), got {d}")
+            if not (α > -d):
+                raise ParameterError(f"Concentration α must be > -d, got α={α}, d={d}")
             self.d: float = d
             self.α: float = α
         elif h is not None and γ is not None:
+            if h <= 0:
+                raise ParameterError(f"Entropy h must be positive, got {h}")
+            if not (0 <= γ <= 1):
+                raise ParameterError(f"Power-law exponent γ must be in [0, 1], got {γ}")
             self.d: float = 1 - invdigamma(digamma(1) - h * γ)
             self.α: float = invdigamma(h * (1 - γ) + digamma(1)) - 1
         else:
-            raise ValueError("PYP() must be instantiated either with d and α or with h and γ.")
+            raise ParameterError("PYP() must be instantiated either with d and α or with h and γ.")
 
     @property
     def h(self) -> float:
@@ -260,11 +285,20 @@ class FLModel(AbstractModel):
 
     def uniqueness(self, n):
         """Calculate expected uniqueness for sample size n."""
-        return (1 - 2 ** (-self.h)) ** (n - 1)
+        # (1 - 2^(-h))^(n-1) = exp((n-1) * log(1 - 2^(-h)))
+        x = 2.0 ** (-self.h)
+        return np.exp(((n - 1) * np.log1p(-x)))
 
     def correctness(self, n):
         """Calculate expected correctness for sample size n."""
-        return 2**self.h / n * (1 - (1 - 2 ** (-self.h)) ** n)
+        if self.h == 0:
+            return np.where(np.asarray(n) >= 1, 0.0, np.nan)
+
+        # Numerically stable computation:
+        x = 2.0 ** (-self.h)
+        stable_term = -np.expm1(n * np.log1p(-x))
+
+        return 2.0**self.h / n * stable_term
 
     def kanon_violations(self, n, k):
         """Not implemented for baseline model."""

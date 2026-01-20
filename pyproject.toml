@@ -4,6 +4,22 @@ version = "0.1.0"
 description = "A package for modeling and forecasting the effectiveness of identification techniques at scale"
 authors = [{name = "Luc Rocher", email = "luc@rocher.lc"}]
 requires-python = ">= 3.10"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+keywords = ["privacy", "identification", "scaling", "anonymity"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+]
 dependencies = [
     "matplotlib>=3.9.1,<3.11",
     "pandas>=2.2.2,<2.4",
@@ -11,10 +27,18 @@ dependencies = [
     "scipy>=1.14.0,<1.16",
 ]
 
+[project.urls]
+Homepage = "https://github.com/synthetic-society/dataless"
+Documentation = "https://github.com/synthetic-society/dataless#readme"
+Repository = "https://github.com/synthetic-society/dataless.git"
+Issues = "https://github.com/synthetic-society/dataless/issues"
+
 [project.optional-dependencies]
 test = [
     "pytest>=8.0.0,<9.1",
     "pytest-cov>=4.1.0,<7.1",
+    "hypothesis>=6.100.0,<7.0",
+    "pytest-xdist>=3.5.0,<4.0",
 ]
 
 [build-system]
@@ -27,6 +51,12 @@ line-length = 120
 target-version = "py310"
 src = ["dataless", "tests"]
 
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN", "D", "S101", "PLR2004", "PT"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -n auto"

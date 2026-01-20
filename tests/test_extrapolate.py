@@ -1,38 +1,129 @@
-"""
-Unit tests for extrapolation models.
+"""Unit tests for extrapolation models."""
 
-This module contains comprehensive tests for the classes in extrapolate.py,
-covering model initialization, training, and prediction functionality.
-"""
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
-from numpy.testing import assert_array_equal, assert_allclose
-
+from dataless.exceptions import OptimizationWarning, TrainingDataError
 from dataless.extrapolate import (
     AbstractExtrapolation,
-    PYPExtrapolation,
-    FLExtrapolation,
     ExpDecayExtrapolation,
+    FLExtrapolation,
     PolynomialExtrapolation,
+    PYPExtrapolation,
 )
+from hypothesis import given, settings
+from numpy.testing import assert_array_equal
+from scipy.optimize import OptimizeResult
+
+from conftest import assert_valid_predictions, sample_size_arrays, training_data_strategy
+
+ALL_MODELS = [PYPExtrapolation, FLExtrapolation, ExpDecayExtrapolation, PolynomialExtrapolation]
+MONOTONIC_MODELS = [PYPExtrapolation, FLExtrapolation, ExpDecayExtrapolation]
 
 
-@pytest.fixture
-def training_data():
-    """Fixture providing sample training data."""
-    return pd.DataFrame({"n": [10, 100, 1000], "κ": [0.8, 0.5, 0.3]})
+# =============================================================================
+# Property-Based Tests
+# =============================================================================
 
 
-@pytest.fixture
-def test_sizes():
-    """Fixture providing sample test sizes."""
-    return np.array([50, 500, 5000])
+class TestExtrapolationProperties:
+    """Property-based tests for extrapolation models."""
+
+    TRAINING = pd.DataFrame({"n": [10, 100, 1000], "κ": [0.8, 0.5, 0.3]})
+
+    @pytest.mark.parametrize("ModelClass", ALL_MODELS)
+    @given(test_sizes=sample_size_arrays)
+    @settings(max_examples=20)
+    def test_predictions_bounded(self, ModelClass, test_sizes):
+        """All model predictions are in [0, 1]."""
+        model = ModelClass(self.TRAINING)
+        predictions = model.predict(test_sizes)
+        assert_valid_predictions(predictions, monotonic=False)
+
+    @pytest.mark.parametrize("ModelClass", MONOTONIC_MODELS)
+    @given(test_sizes=sample_size_arrays)
+    @settings(max_examples=20)
+    def test_predictions_monotonically_decreasing(self, ModelClass, test_sizes):
+        """Monotonic models have decreasing predictions with sample size."""
+        model = ModelClass(self.TRAINING)
+        predictions = model.predict(np.sort(test_sizes))
+        assert_valid_predictions(predictions, monotonic=True)
+
+    @pytest.mark.parametrize("ModelClass", [PYPExtrapolation, FLExtrapolation])
+    @given(training=training_data_strategy())
+    @settings(max_examples=10)
+    def test_accepts_valid_training_data(self, ModelClass, training):
+        """Models accept valid training data."""
+        model = ModelClass(training)
+        assert hasattr(model, "h")
+
+
+# =============================================================================
+# Parametrized Unit Tests
+# =============================================================================
+
+
+@pytest.mark.parametrize("ModelClass", ALL_MODELS)
+class TestAllExtrapolations:
+    """Parametrized tests for all extrapolation models."""
+
+    def test_training_data_required(self, ModelClass):
+        """Training data is required."""
+        with pytest.raises(TypeError):
+            ModelClass()
+
+    def test_invalid_training_data(self, ModelClass):
+        """Invalid training data raises exception."""
+        with pytest.raises(TrainingDataError):
+            ModelClass(pd.DataFrame({"wrong_column": [1, 2, 3]}))
+
+    def test_empty_training_data(self, ModelClass):
+        """Empty training data raises exception."""
+        with pytest.raises(TrainingDataError):
+            ModelClass(pd.DataFrame({"n": [], "κ": []}))
+
+    def test_initialization(self, ModelClass, training_data):
+        """Model initializes and trains automatically."""
+        model = ModelClass(training_data)
+        # All models should have trained parameters
+        assert any(hasattr(model, attr) for attr in ["h", "a", "γ"])
+
+    def test_make_loss_fun(self, ModelClass, training_data):
+        """Loss function is callable and returns non-negative finite values."""
+        loss_fn = ModelClass.make_loss_fun(training_data)
+        assert callable(loss_fn)
+        # Use model-specific initial state or default
+        init_state = getattr(ModelClass, "INIT_STATE", [1.0] * 3)
+        loss = loss_fn(init_state)
+        assert np.isfinite(loss) and loss >= 0
+
+    def test_prediction_shape(self, ModelClass, training_data):
+        """Predictions match input shape."""
+        model = ModelClass(training_data)
+        scalar_pred = model.predict(100)
+        assert np.isscalar(scalar_pred) or len(scalar_pred) == 1
+        array_pred = model.predict(np.array([100, 200, 300]))
+        assert len(array_pred) == 3
+
+    def test_prediction_values(self, ModelClass, training_data):
+        """Predictions are bounded and finite."""
+        model = ModelClass(training_data)
+        predictions = model.predict(np.array([50, 500, 5000]))
+        assert np.all(np.isfinite(predictions))
+        assert_valid_predictions(predictions, monotonic=False)
+
+
+# =============================================================================
+# Abstract Base Class Tests
+# =============================================================================
 
 
 class MockExtrapolation(AbstractExtrapolation):
-    """Mock implementation of AbstractExtrapolation for testing."""
+    """Mock implementation for testing AbstractExtrapolation."""
+
+    INIT_STATE = [0.0]
 
     def __init__(self, training_data):
         self.training_data = training_data
@@ -40,257 +131,150 @@ class MockExtrapolation(AbstractExtrapolation):
 
     @classmethod
     def make_loss_fun(cls, dd):
-        def loss(x):
-            return 0.0
-
-        return loss
+        return lambda x: 0.0
 
     def train(self):
         self.trained = True
 
-    def test(self, n):
+    def predict(self, n):
         return np.ones_like(n, dtype=float)
+
+    def summary(self):
+        return "Mock Model"
 
 
 class TestAbstractExtrapolation:
     """Tests for AbstractExtrapolation base class."""
 
     def test_abstract_methods(self):
-        """Test that abstract methods must be implemented."""
+        """Abstract methods must be implemented."""
         with pytest.raises(TypeError):
             AbstractExtrapolation()
 
     def test_mock_implementation(self, training_data):
-        """Test that concrete implementation works."""
+        """Concrete implementation works."""
         model = MockExtrapolation(training_data)
         assert not model.trained
         model.train()
         assert model.trained
-
-        n = np.array([1, 10, 100])
-        result = model.test(n)
-        assert_array_equal(result, np.ones_like(n))
+        assert_array_equal(model.predict(np.array([1, 10, 100])), np.ones(3))
 
     def test_validation(self, training_data):
-        """Test that validation returnns an exception if
-        the training data is invalid."""
-
+        """Validation rejects invalid training data."""
         model = MockExtrapolation(training_data)
-        with pytest.raises(ValueError):
-            model.validate_training_data(pd.DataFrame({"wrong_column": [1, 2, 3]}))
-        with pytest.raises(ValueError):
-            model.validate_training_data(pd.DataFrame({"n": [], "κ": []}))
-        with pytest.raises(ValueError):
-            model.validate_training_data(pd.DataFrame({"n": [1, 2, 3], "κ": [1, 2]}))
-        with pytest.raises(ValueError):
-            model.validate_training_data(None)
+        invalid_cases = [
+            pd.DataFrame({"wrong_column": [1, 2, 3]}),
+            pd.DataFrame({"n": [], "κ": []}),
+            None,
+        ]
+        for invalid in invalid_cases:
+            with pytest.raises((TrainingDataError, TypeError)):
+                model.validate_training_data(invalid)
 
 
-class TestPYPExtrapolation:
-    """Tests for PYP-based extrapolation."""
-
-    def test_initialization(self, training_data):
-        """Test model initialization and automatic training."""
-        model = PYPExtrapolation(training_data)
-        assert hasattr(model, "h")
-        assert hasattr(model, "γ")
-
-    def test_make_loss_fun(self, training_data):
-        """Test loss function creation."""
-        loss_fn = PYPExtrapolation.make_loss_fun(training_data)
-        assert callable(loss_fn)
-
-        # Test with initial state
-        loss = loss_fn(PYPExtrapolation.INIT_STATE)
-        assert np.isfinite(loss)
-        assert loss >= 0
-
-    def test_training(self, training_data):
-        """Test model training."""
-        model = PYPExtrapolation(training_data)
-
-        # Retrain and verify parameters change
-        old_h, old_γ = model.h, model.γ
-        model.train()
-        assert np.isfinite(model.h)
-        assert np.isfinite(model.γ)
-        assert 0 <= model.γ <= 1
-
-    def test_prediction(self, training_data, test_sizes):
-        """Test model predictions."""
-        model = PYPExtrapolation(training_data)
-        predictions = model.test(test_sizes)
-
-        assert len(predictions) == len(test_sizes)
-        assert np.all(predictions >= 0)
-        assert np.all(predictions <= 1)
-        assert np.all(np.diff(predictions) <= 0)  # Should decrease with size
-
-
-class TestFLExtrapolation:
-    """Tests for FL-based extrapolation."""
-
-    def test_initialization(self, training_data):
-        """Test model initialization and automatic training."""
-        model = FLExtrapolation(training_data)
-        assert hasattr(model, "h")
-
-    def test_make_loss_fun(self, training_data):
-        """Test loss function creation."""
-        loss_fn = FLExtrapolation.make_loss_fun(training_data)
-        assert callable(loss_fn)
-
-        # Test with initial state
-        loss = loss_fn(FLExtrapolation.INIT_STATE)
-        assert np.isfinite(loss)
-        assert loss >= 0
-
-    def test_training(self, training_data):
-        """Test model training."""
-        model = FLExtrapolation(training_data)
-
-        # Retrain and verify parameters change
-        old_h = model.h
-        model.train()
-        assert np.isfinite(model.h)
-        assert model.h >= 0
-
-    def test_prediction(self, training_data, test_sizes):
-        """Test model predictions."""
-        model = FLExtrapolation(training_data)
-        predictions = model.test(test_sizes)
-
-        assert len(predictions) == len(test_sizes)
-        assert np.all(predictions >= 0)
-        assert np.all(predictions <= 1)
-        assert np.all(np.diff(predictions) <= 0)  # Should decrease with size
+# =============================================================================
+# Model-Specific Tests
+# =============================================================================
 
 
 class TestExpDecayExtrapolation:
-    """Tests for exponential decay extrapolation."""
-
-    def test_initialization(self, training_data):
-        """Test model initialization and automatic training."""
-        model = ExpDecayExtrapolation(training_data)
-        assert hasattr(model, "a")
-        assert hasattr(model, "b")
+    """Tests specific to ExpDecayExtrapolation."""
 
     def test_correctness_function(self):
-        """Test the correctness calculation function."""
+        """Static correctness function works correctly."""
         n = np.array([1, 10, 100])
         result = ExpDecayExtrapolation.correctness(1.0, 0.1, n)
         assert np.all(np.isfinite(result))
-        assert np.all(np.diff(result) <= 0)  # Should decrease with size
-
-    def test_make_loss_fun(self, training_data):
-        """Test loss function creation."""
-        loss_fn = ExpDecayExtrapolation.make_loss_fun(training_data)
-        assert callable(loss_fn)
-
-        # Test with sample parameters
-        loss = loss_fn([1.0, 0.1])
-        assert np.isfinite(loss)
-        assert loss >= 0
-
-    def test_training(self, training_data):
-        """Test model training."""
-        model = ExpDecayExtrapolation(training_data)
-
-        # Retrain and verify parameters change
-        old_a, old_b = model.a, model.b
-        model.train()
-        assert np.isfinite(model.a)
-        assert np.isfinite(model.b)
-
-    def test_prediction(self, training_data, test_sizes):
-        """Test model predictions."""
-        model = ExpDecayExtrapolation(training_data)
-        predictions = model.test(test_sizes)
-
-        assert len(predictions) == len(test_sizes)
-        assert np.all(predictions >= 0)
-        assert np.all(predictions <= 1)
-        assert np.all(np.diff(predictions) <= 0)  # Should decrease with size
+        assert np.all(np.diff(result) <= 0)
 
 
 class TestPolynomialExtrapolation:
-    """Tests for polynomial extrapolation."""
-
-    def test_initialization(self, training_data):
-        """Test model initialization and automatic training."""
-        model = PolynomialExtrapolation(training_data)
-        assert hasattr(model, "a")
-        assert hasattr(model, "b")
-        assert hasattr(model, "c")
+    """Tests specific to PolynomialExtrapolation."""
 
     def test_correctness_function(self):
-        """Test the correctness calculation function."""
+        """Static correctness function works correctly."""
         n = np.array([1, 10, 100])
         result = PolynomialExtrapolation.correctness(-0.1, -0.2, -0.3, n)
         assert np.all(np.isfinite(result))
 
-    def test_make_loss_fun(self, training_data):
-        """Test loss function creation."""
-        loss_fn = PolynomialExtrapolation.make_loss_fun(training_data)
-        assert callable(loss_fn)
 
-        # Test with sample parameters
-        loss = loss_fn([-0.1, -0.2, -0.3])
-        assert np.isfinite(loss)
-        assert loss >= 0
-
-    def test_training(self, training_data):
-        """Test model training."""
-        model = PolynomialExtrapolation(training_data)
-
-        # Retrain and verify parameters change
-        old_a, old_b, old_c = model.a, model.b, model.c
-        model.train()
-        assert np.isfinite(model.a)
-        assert np.isfinite(model.b)
-        assert np.isfinite(model.c)
-
-    def test_prediction(self, training_data, test_sizes):
-        """Test model predictions."""
-        model = PolynomialExtrapolation(training_data)
-        predictions = model.test(test_sizes)
-
-        assert len(predictions) == len(test_sizes)
-        assert np.all(predictions >= 0)
-        assert np.all(predictions <= 1)
+# =============================================================================
+# Deprecation and Summary Tests
+# =============================================================================
 
 
-@pytest.mark.parametrize(
-    "ModelClass", [PYPExtrapolation, FLExtrapolation, ExpDecayExtrapolation, PolynomialExtrapolation]
-)
-class TestAllExtrapolations:
-    """Parameterized tests for all extrapolation models."""
+class TestDeprecationWarning:
+    """Tests for deprecation warning on test() method."""
 
-    def test_training_data_required(self, ModelClass):
-        """Test that training data is required."""
-        with pytest.raises(TypeError):
-            ModelClass()
+    TRAINING = pd.DataFrame({"n": [10, 100, 1000], "κ": [0.8, 0.5, 0.3]})
 
-    def test_invalid_training_data(self, ModelClass):
-        """Test behavior with invalid training data."""
-        invalid_data = pd.DataFrame({"wrong_column": [1, 2, 3]})
-        with pytest.raises(Exception):  # Could be KeyError or ValueError
-            ModelClass(invalid_data)
+    @pytest.mark.parametrize("ModelClass", ALL_MODELS)
+    def test_test_method_warns(self, ModelClass):
+        """Using test() method emits a deprecation warning."""
+        model = ModelClass(self.TRAINING)
+        with pytest.warns(DeprecationWarning, match="predict"):
+            model.test(np.array([100]))
 
-    def test_empty_training_data(self, ModelClass):
-        """Test behavior with empty training data."""
-        empty_data = pd.DataFrame({"n": [], "κ": []})
-        with pytest.raises(Exception):
-            ModelClass(empty_data)
+    @pytest.mark.parametrize("ModelClass", ALL_MODELS)
+    def test_test_and_predict_same_output(self, ModelClass):
+        """test() and predict() return the same values."""
+        model = ModelClass(self.TRAINING)
+        n = np.array([50, 500, 5000])
+        with pytest.warns(DeprecationWarning):
+            test_result = model.test(n)
+        predict_result = model.predict(n)
+        assert np.allclose(test_result, predict_result)
 
-    def test_prediction_shape(self, ModelClass, training_data):
-        """Test that predictions match input shape."""
-        model = ModelClass(training_data)
 
-        # Test scalar input
-        scalar_pred = model.test(100)
-        assert np.isscalar(scalar_pred) or len(scalar_pred) == 1
+class TestSummaryMethod:
+    """Tests for summary() method."""
 
-        # Test array input
-        array_pred = model.test(np.array([100, 200, 300]))
-        assert len(array_pred) == 3
+    TRAINING = pd.DataFrame({"n": [10, 100, 1000], "κ": [0.8, 0.5, 0.3]})
+
+    @pytest.mark.parametrize("ModelClass", ALL_MODELS)
+    def test_summary_returns_string(self, ModelClass):
+        """summary() returns a non-empty string."""
+        model = ModelClass(self.TRAINING)
+        summary = model.summary()
+        assert isinstance(summary, str)
+        assert len(summary) > 0
+
+    @pytest.mark.parametrize("ModelClass", ALL_MODELS)
+    def test_summary_contains_training_info(self, ModelClass):
+        """summary() contains training data info."""
+        model = ModelClass(self.TRAINING)
+        summary = model.summary()
+        assert "Training points: 3" in summary
+        assert "10" in summary  # n_min
+        assert "1,000" in summary or "1000" in summary  # n_max
+
+
+# =============================================================================
+# Optimization Warning Tests
+# =============================================================================
+
+
+class TestOptimizationWarning:
+    """Tests for optimization convergence warnings."""
+
+    TRAINING = pd.DataFrame({"n": [10, 100, 1000], "κ": [0.8, 0.5, 0.3]})
+
+    @pytest.mark.parametrize("ModelClass", ALL_MODELS)
+    def test_warns_on_non_convergence(self, ModelClass):
+        """Non-convergence emits OptimizationWarning."""
+        # Create a mock result that indicates non-convergence
+        # Need different x shapes for different models
+        if ModelClass == PYPExtrapolation:
+            x = [12.0, 0.26]
+        elif ModelClass == FLExtrapolation:
+            x = [12.0]
+        elif ModelClass == ExpDecayExtrapolation:
+            x = [1.0, 1.0]
+        else:  # PolynomialExtrapolation
+            x = [0.0, -1.0, -1.0]
+
+        mock_result = OptimizeResult(x=x, success=False, message="Test non-convergence")
+
+        with patch("dataless.extrapolate.minimize", return_value=mock_result):
+            with pytest.warns(OptimizationWarning, match="did not converge"):
+                ModelClass(self.TRAINING)

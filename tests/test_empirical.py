@@ -1,15 +1,8 @@
 import numpy as np
 import pandas as pd
 import pytest
-from numpy.testing import assert_array_equal, assert_allclose
-
-from dataless.empirical import (
-    frequencies,
-    empirical_entropy,
-    counts_from_dataframe,
-    uniqueness,
-    correctness
-)
+from dataless.empirical import correctness, counts_from_dataframe, empirical_entropy, frequencies, uniqueness
+from numpy.testing import assert_allclose, assert_array_equal
 
 
 class TestFrequencies:
@@ -83,34 +76,40 @@ class TestCountsFromDataframe:
 
     def test_simple_dataframe(self):
         """Test counts from simple DataFrame."""
-        df = pd.DataFrame({
-            'A': [1, 1, 2],
-            'B': [1, 1, 2]
-        })
+        df = pd.DataFrame(
+            {
+                "A": [1, 1, 2],
+                "B": [1, 1, 2],
+            },
+        )
         expected = np.array([1, 2])
         assert_array_equal(counts_from_dataframe(df), expected)
 
     def test_all_unique_rows(self):
         """Test counts when all rows are unique."""
-        df = pd.DataFrame({
-            'A': [1, 2, 3],
-            'B': [4, 5, 6]
-        })
+        df = pd.DataFrame(
+            {
+                "A": [1, 2, 3],
+                "B": [4, 5, 6],
+            },
+        )
         expected = np.array([1, 1, 1])
         assert_array_equal(counts_from_dataframe(df), expected)
 
     def test_all_identical_rows(self):
         """Test counts when all rows are identical."""
-        df = pd.DataFrame({
-            'A': [1, 1, 1],
-            'B': [2, 2, 2]
-        })
+        df = pd.DataFrame(
+            {
+                "A": [1, 1, 1],
+                "B": [2, 2, 2],
+            },
+        )
         expected = np.array([3])
         assert_array_equal(counts_from_dataframe(df), expected)
 
     def test_empty_dataframe(self):
         """Test counts from empty DataFrame."""
-        df = pd.DataFrame({'A': [], 'B': []})
+        df = pd.DataFrame({"A": [], "B": []})
         expected = np.array([])
         assert_array_equal(counts_from_dataframe(df), expected)
 
@@ -121,7 +120,7 @@ class TestUniqueness:
     def test_basic_frequencies(self):
         """Test uniqueness with basic frequency distribution."""
         freqs = np.array([1, 1, 2, 3])  # 2 unique elements out of 7 total
-        expected = 2/7
+        expected = 2 / 7
         assert_allclose(uniqueness(freqs), expected)
 
     def test_all_unique(self):
@@ -151,7 +150,7 @@ class TestCorrectness:
     def test_basic_frequencies(self):
         """Test correctness with basic frequency distribution."""
         freqs = np.array([1, 2, 3])  # 3 unique elements out of 6 total
-        expected = 3/6
+        expected = 3 / 6
         assert_allclose(correctness(freqs), expected)
 
     def test_all_unique(self):
@@ -162,7 +161,7 @@ class TestCorrectness:
     def test_single_element(self):
         """Test correctness with single frequency."""
         freqs = np.array([5])  # 1 unique element out of 5 total
-        expected = 1/5
+        expected = 1 / 5
         assert_allclose(correctness(freqs), expected)
 
     def test_empty_array(self):

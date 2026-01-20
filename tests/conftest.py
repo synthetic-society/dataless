@@ -19,10 +19,7 @@ def sample_sizes():
 @pytest.fixture(scope="session")
 def training_data():
     """Fixture providing standard training data for models."""
-    return pd.DataFrame({
-        'n': [10, 100, 1000],
-        'κ': [0.8, 0.5, 0.3]
-    })
+    return pd.DataFrame({"n": [10, 100, 1000], "κ": [0.8, 0.5, 0.3]})
 
 
 @pytest.fixture(scope="session")
@@ -41,7 +38,4 @@ def sample_multiplicities():
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
-    config.addinivalue_line(
-        "markers",
-        "slow: marks tests as slow (deselect with '-m \"not slow\"')"
-    )
+    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")

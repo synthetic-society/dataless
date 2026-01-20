@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Union
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -10,84 +10,84 @@ from .model import PYP, FLModel
 
 
 class AbstractExtrapolation(ABC):
-    """
-    Abstract base class for extrapolation models.
+    """Abstract base class for extrapolation models.
 
     Defines the interface for models that can be trained on empirical data
     and used to predict scaling behavior at new sample sizes.
     """
+
     @abstractmethod
     def __init__(self, training_data: pd.DataFrame) -> None:
-        """
-        Initialize the extrapolation model.
+        """Initialize the extrapolation model.
 
         Args:
             training_data: DataFrame containing training samples
+
         """
 
     def validate_training_data(self, dd: pd.DataFrame) -> None:
-        """
-        Validate the training data.
+        """Validate the training data.
 
         Args:
             dd: DataFrame containing training data
 
         Raises:
             ValueError: If training data is invalid
+
         """
         if not isinstance(dd, pd.DataFrame):
             raise ValueError("Training data must be a DataFrame")
-        if not all(col in dd.columns for col in ['n', 'κ']):
+        if not all(col in dd.columns for col in ["n", "κ"]):
             raise ValueError("Training data must have columns 'n' and 'κ'")
-        
+
         if len(dd) < 3:
             raise ValueError("Training data must have at least 3 samples")
-    
+
     @classmethod
     @abstractmethod
     def make_loss_fun(cls, dd: pd.DataFrame) -> Callable:
-        """
-        Loss function for model optimization.
+        """Loss function for model optimization.
 
         Args:
             dd: DataFrame containing training data
 
         Returns:
             Callable: Loss function for optimization
+
         """
-      
+
     @abstractmethod
     def train(self) -> None:
         """Train the model on the provided training data."""
-    
+
     @abstractmethod
-    def test(self, n: Union[int, ndarray]):
-        """
-        Make predictions for new sample sizes.
+    def test(self, n: int | ndarray):
+        """Make predictions for new sample sizes.
 
         Args:
             n: Sample size or array of sample sizes
 
         Returns:
             ndarray: Predicted values for the given sample sizes
+
         """
 
 
 class PYPExtrapolation(AbstractExtrapolation):
-    """
-    Extrapolation model based on Pitman-Yor Process.
+    """Extrapolation model based on Pitman-Yor Process.
 
     This model fits a Pitman-Yor Process to training data and uses it
     to predict scaling behavior at new sample sizes.
     """
+
     INIT_STATE = (12, 0.26)  # Initial state for optimization (h, γ)
 
     def __init__(self, training_data: pd.DataFrame) -> None:
-        """
-        Initialize PYP extrapolation model.
+        """Initialize PYP extrapolation model.
 
         Args:
             training_data: DataFrame with columns 'n' (sample sizes) and 'κ' (observations)
+
         """
         self.training_data = training_data
         self.validate_training_data(training_data)
@@ -96,43 +96,42 @@ class PYPExtrapolation(AbstractExtrapolation):
 
     @staticmethod
     def make_loss_fun(dd: pd.DataFrame) -> Callable:
-        """
-        Create loss function for PYP parameter optimization.
+        """Create loss function for PYP parameter optimization.
 
         Args:
             dd: DataFrame with columns 'n' and 'κ'
 
         Returns:
             Callable: Loss function for optimization
+
         """
         n_range = dd.n.to_numpy()
-        emp_κ = dd['κ'].values
+        emp_κ = dd["κ"].values
 
         def loss_fun(x):
             expected_κ = PYP(h=x[0], γ=x[1]).correctness(n_range)
-            return (np.log(n_range) * (expected_κ - emp_κ)**2).mean()
+            return (np.log(n_range) * (expected_κ - emp_κ) ** 2).mean()
 
         return loss_fun
 
     def train(self) -> None:
-        """
-        Train the model by optimizing PYP parameters.
-        
+        """Train the model by optimizing PYP parameters.
+
         Uses Nelder-Mead optimization to find optimal h and γ values.
         """
         loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, type(self).INIT_STATE, method='Nelder-Mead')
+        res = minimize(loss_function, type(self).INIT_STATE, method="Nelder-Mead")
         self.h, self.γ = res.x
-        
-    def test(self, n: Union[int, ndarray]) -> ndarray:
-        """
-        Predict correctness values for new sample sizes.
+
+    def test(self, n: int | ndarray) -> ndarray:
+        """Predict correctness values for new sample sizes.
 
         Args:
             n: Sample size or array of sample sizes
 
         Returns:
             ndarray: Predicted correctness values
+
         """
         n_array = np.atleast_1d(n)
         result = PYP(h=self.h, γ=self.γ).correctness(n_array)
@@ -140,20 +139,20 @@ class PYPExtrapolation(AbstractExtrapolation):
 
 
 class FLExtrapolation(AbstractExtrapolation):
-    """
-    Extrapolation model based on baseline entropy model.
+    """Extrapolation model based on baseline entropy model.
 
     This model provides a simpler alternative to PYP extrapolation,
     using only entropy-based calculations.
     """
+
     INIT_STATE = [12.0]  # Initial entropy value for optimization
 
     def __init__(self, training_data):
-        """
-        Initialize FL extrapolation model.
+        """Initialize FL extrapolation model.
 
         Args:
             training_data: DataFrame with columns 'n' and 'κ'
+
         """
         self.training_data = training_data
         self.validate_training_data(training_data)
@@ -162,43 +161,42 @@ class FLExtrapolation(AbstractExtrapolation):
 
     @classmethod
     def make_loss_fun(cls, dd):
-        """
-        Loss function for entropy parameter optimization.
+        """Loss function for entropy parameter optimization.
 
         Args:
             dd: DataFrame with columns 'n' and 'κ'
 
         Returns:
             Callable: Loss function for optimization
+
         """
         n_range = dd.n.to_numpy()
-        emp_κ = dd['κ'].to_numpy()
+        emp_κ = dd["κ"].to_numpy()
 
         def loss_fun(x):
             expected_κ = FLModel(h=float(x[0])).correctness(n_range)
-            return (np.log(n_range) * (expected_κ - emp_κ)**2).mean()
+            return (np.log(n_range) * (expected_κ - emp_κ) ** 2).mean()
 
         return loss_fun
 
     def train(self):
-        """
-        Train the model by optimizing the entropy parameter.
-        
+        """Train the model by optimizing the entropy parameter.
+
         Uses Nelder-Mead optimization to find optimal entropy value.
         """
         loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, self.INIT_STATE, method='Nelder-Mead')
+        res = minimize(loss_function, self.INIT_STATE, method="Nelder-Mead")
         self.h = float(res.x[0])
 
     def test(self, n):
-        """
-        Predict correctness values for new sample sizes.
+        """Predict correctness values for new sample sizes.
 
         Args:
             n: Sample size or array of sample sizes
 
         Returns:
             ndarray: Predicted correctness values
+
         """
         n_array = np.atleast_1d(n)
         result = FLModel(h=self.h).correctness(n_array)
@@ -206,28 +204,27 @@ class FLExtrapolation(AbstractExtrapolation):
 
 
 class ExpDecayExtrapolation(AbstractExtrapolation):
-    """
-    Exponential decay-based extrapolation model.
+    """Exponential decay-based extrapolation model.
 
     This model fits an exponential decay curve to the training data
     for predicting scaling behavior.
     """
+
     def __init__(self, training_data):
-        """
-        Initialize exponential decay model.
+        """Initialize exponential decay model.
 
         Args:
             training_data: DataFrame with columns 'n' and 'κ'
+
         """
         self.training_data = training_data
         self.validate_training_data(training_data)
 
         self.train()
-      
+
     @staticmethod
     def correctness(a, b, n):
-        """
-        Compute correctness using exponential decay formula.
+        """Compute correctness using exponential decay formula.
 
         Args:
             a: Amplitude parameter
@@ -236,48 +233,48 @@ class ExpDecayExtrapolation(AbstractExtrapolation):
 
         Returns:
             ndarray: Correctness values
+
         """
-        return a * np.exp(-b * np.sqrt(n)) + (1-a * np.exp(-b))
+        return a * np.exp(-b * np.sqrt(n)) + (1 - a * np.exp(-b))
 
     @classmethod
     def make_loss_fun(cls, dd):
-        """
-        Loss function for exponential decay parameter optimization.
+        """Loss function for exponential decay parameter optimization.
 
         Args:
             dd: DataFrame with columns 'n' and 'κ'
 
         Returns:
             Callable: Loss function for optimization
+
         """
         n_range = dd.n.to_numpy()
-        emp_κ = dd['κ'].to_numpy()
+        emp_κ = dd["κ"].to_numpy()
 
         def loss_fun(x):
             est_κ = cls.correctness(x[0], x[1], n_range)
-            return (np.log(n_range) * (est_κ - emp_κ)**2).mean()
+            return (np.log(n_range) * (est_κ - emp_κ) ** 2).mean()
 
         return loss_fun
 
     def train(self):
-        """
-        Train the model by optimizing exponential decay parameters.
-        
+        """Train the model by optimizing exponential decay parameters.
+
         Uses Nelder-Mead optimization to find optimal a and b values.
         """
         loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, (1, 1), method='Nelder-Mead')
+        res = minimize(loss_function, (1, 1), method="Nelder-Mead")
         self.a, self.b = res.x
 
     def test(self, n):
-        """
-        Predict correctness values for new sample sizes.
+        """Predict correctness values for new sample sizes.
 
         Args:
             n: Sample size or array of sample sizes
 
         Returns:
             ndarray: Predicted correctness values, clipped to [0,1]
+
         """
         n_array = np.atleast_1d(n)
         result = np.clip(type(self).correctness(self.a, self.b, n_array), 0, 1)
@@ -285,18 +282,18 @@ class ExpDecayExtrapolation(AbstractExtrapolation):
 
 
 class PolynomialExtrapolation(AbstractExtrapolation):
-    """
-    Polynomial fit-based extrapolation model.
+    """Polynomial fit-based extrapolation model.
 
     This model fits a third-degree polynomial to the log-transformed data
     for predicting scaling behavior.
     """
+
     def __init__(self, training_data):
-        """
-        Initialize polynomial extrapolation model.
+        """Initialize polynomial extrapolation model.
 
         Args:
             training_data: DataFrame with columns 'n' and 'κ'
+
         """
         self.training_data = training_data
         self.validate_training_data(training_data)
@@ -305,8 +302,7 @@ class PolynomialExtrapolation(AbstractExtrapolation):
 
     @staticmethod
     def correctness(a, b, c, n):
-        """
-        Compute correctness using polynomial formula.
+        """Compute correctness using polynomial formula.
 
         Args:
             a: Cubic coefficient
@@ -316,48 +312,48 @@ class PolynomialExtrapolation(AbstractExtrapolation):
 
         Returns:
             ndarray: Correctness values
+
         """
-        return a * np.log10(n)**3 + b * np.log10(n)**2 + c * np.log10(n) + 1
+        return a * np.log10(n) ** 3 + b * np.log10(n) ** 2 + c * np.log10(n) + 1
 
     @classmethod
     def make_loss_fun(cls, dd):
-        """
-        Loss function for polynomial parameter optimization.
+        """Loss function for polynomial parameter optimization.
 
         Args:
             dd: DataFrame with columns 'n' and 'κ'
 
         Returns:
             Callable: Loss function for optimization
+
         """
         n_range = dd.n.to_numpy()
-        emp_κ = dd['κ'].to_numpy()
+        emp_κ = dd["κ"].to_numpy()
 
         def loss_fun(x):
             est_κ = cls.correctness(x[0], x[1], x[2], n_range)
-            return (np.log(n_range) * (est_κ - emp_κ)**2).mean()
+            return (np.log(n_range) * (est_κ - emp_κ) ** 2).mean()
 
         return loss_fun
 
     def train(self):
-        """
-        Train the model by optimizing polynomial coefficients.
-        
+        """Train the model by optimizing polynomial coefficients.
+
         Uses Nelder-Mead optimization to find optimal polynomial coefficients.
         """
         loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, (0, -1, -1), method='Nelder-Mead')
+        res = minimize(loss_function, (0, -1, -1), method="Nelder-Mead")
         self.a, self.b, self.c = res.x
 
     def test(self, n):
-        """
-        Predict correctness values for new sample sizes.
+        """Predict correctness values for new sample sizes.
 
         Args:
             n: Sample size or array of sample sizes
 
         Returns:
             ndarray: Predicted correctness values, clipped to [0,1]
+
         """
         n_array = np.atleast_1d(n)
         result = np.clip(type(self).correctness(self.a, self.b, self.c, n_array), 0, 1)

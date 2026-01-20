@@ -25,10 +25,10 @@ Key terminology:
 
 ## Installation
 
-This project uses [pixi](https://pixi.sh/latest/) for package management to ensure reproducible environments:
+This project uses [uv](https://docs.astral.sh/uv/) for package management to ensure reproducible environments:
 
 ```bash
-pixi install
+uv sync
 ```
 
 Requirements:
@@ -59,7 +59,8 @@ model.test(np.array([1, 10, 100, 1000, 10000]))
 
 ### Running Tests
 ```bash
-pixi run test
+uv sync --extras test
+uv run pytest tests/ --cov=dataless --cov-report=xml --cov-report=term
 ```
 
 ### Contributing

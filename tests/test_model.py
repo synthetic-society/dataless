@@ -1,5 +1,4 @@
-"""
-Unit tests for statistical models.
+"""Unit tests for statistical models.
 
 This module contains comprehensive tests for the functions and classes in model.py,
 covering core PYP functionality, utility functions, and model implementations.
@@ -7,28 +6,24 @@ covering core PYP functionality, utility functions, and model implementations.
 
 import numpy as np
 import pytest
-from numpy.testing import assert_array_equal, assert_allclose
-
 from dataless.model import (
+    PYP,
+    FLModel,
+    freqs_from_multiplicities,
+    invdigamma,
+    multiplicities_from_freqs,
+    multiplicities_from_sample,
+    pyp_correctness,
     pyp_entropy,
     pyp_uniqueness,
-    pyp_correctness,
-    invdigamma,
-    multiplicities_from_sample,
-    multiplicities_from_freqs,
-    freqs_from_multiplicities,
-    PYP,
-    FLModel
 )
+from numpy.testing import assert_allclose, assert_array_equal
 
 
 @pytest.fixture
 def valid_pyp_params():
     """Fixture providing valid PYP parameters."""
-    return {
-        'd': 0.5,
-        'α': 1.0
-    }
+    return {"d": 0.5, "α": 1.0}
 
 
 @pytest.fixture
@@ -42,7 +37,7 @@ class TestPYPFunctions:
 
     def test_pyp_entropy_basic(self, valid_pyp_params):
         """Test basic entropy calculation."""
-        result = pyp_entropy(valid_pyp_params['d'], valid_pyp_params['α'])
+        result = pyp_entropy(valid_pyp_params["d"], valid_pyp_params["α"])
         assert result > 0
         assert np.isfinite(result)
 
@@ -55,27 +50,27 @@ class TestPYPFunctions:
     def test_pyp_uniqueness_basic(self, valid_pyp_params):
         """Test basic uniqueness calculation."""
         n = np.array([1, 10, 100])
-        result = pyp_uniqueness(valid_pyp_params['d'], valid_pyp_params['α'], n)
+        result = pyp_uniqueness(valid_pyp_params["d"], valid_pyp_params["α"], n)
         assert np.all(result >= 0)
         assert np.all(result <= 1)
         assert np.all(np.diff(result) <= 0)  # Should be monotonically decreasing
 
     def test_pyp_uniqueness_single_sample(self, valid_pyp_params):
         """Test uniqueness for single sample."""
-        result = pyp_uniqueness(valid_pyp_params['d'], valid_pyp_params['α'], 1)
+        result = pyp_uniqueness(valid_pyp_params["d"], valid_pyp_params["α"], 1)
         assert_allclose(result, 1.0)
 
     def test_pyp_correctness_basic(self, valid_pyp_params):
         """Test basic correctness calculation."""
         n = np.array([1, 10, 100])
-        result = pyp_correctness(valid_pyp_params['d'], valid_pyp_params['α'], n)
+        result = pyp_correctness(valid_pyp_params["d"], valid_pyp_params["α"], n)
         assert np.all(result >= 0)
         assert np.all(result <= 1)
         assert np.all(np.diff(result) <= 0)  # Should be monotonically decreasing
 
     def test_pyp_correctness_single_sample(self, valid_pyp_params):
         """Test correctness for single sample."""
-        result = pyp_correctness(valid_pyp_params['d'], valid_pyp_params['α'], 1)
+        result = pyp_correctness(valid_pyp_params["d"], valid_pyp_params["α"], 1)
         assert_allclose(result, 1.0)
 
 
@@ -127,9 +122,9 @@ class TestPYP:
 
     def test_init_with_d_alpha(self, valid_pyp_params):
         """Test PYP initialization with d and α."""
-        pyp = PYP(d=valid_pyp_params['d'], α=valid_pyp_params['α'])
-        assert pyp.d == valid_pyp_params['d']
-        assert pyp.α == valid_pyp_params['α']
+        pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
+        assert pyp.d == valid_pyp_params["d"]
+        assert pyp.α == valid_pyp_params["α"]
 
     def test_init_with_h_gamma(self):
         """Test PYP initialization with h and γ."""
@@ -149,25 +144,25 @@ class TestPYP:
 
     def test_properties(self, valid_pyp_params):
         """Test PYP property calculations."""
-        pyp = PYP(d=valid_pyp_params['d'], α=valid_pyp_params['α'])
+        pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
         assert np.isfinite(pyp.h)
         assert 0 <= pyp.γ <= 1
 
     def test_methods(self, valid_pyp_params):
         """Test PYP method calculations."""
-        pyp = PYP(d=valid_pyp_params['d'], α=valid_pyp_params['α'])
+        pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
         n = np.array([1, 10, 100])
-        
+
         # Test uniqueness
         u = pyp.uniqueness(n)
         assert np.all(u >= 0)
         assert np.all(u <= 1)
-        
+
         # Test correctness
         c = pyp.correctness(n)
         assert np.all(c >= 0)
         assert np.all(c <= 1)
-        
+
         # Test k-anonymity violations
         k = 2
         v = pyp.kanon_violations(n[0], k)
@@ -194,13 +189,13 @@ class TestFLModel:
         """Test FLModel method calculations."""
         model = FLModel(2.0)
         n = np.array([1, 10, 100])
-        
+
         # Test uniqueness
         u = model.uniqueness(n)
         assert np.all(u >= 0)
         assert np.all(u <= 1)
         assert np.all(np.diff(u) <= 0)  # Should be monotonically decreasing
-        
+
         # Test correctness
         c = model.correctness(n)
         assert np.all(c >= 0)
@@ -214,13 +209,9 @@ class TestFLModel:
             model.kanon_violations(10, 2)
 
 
-@pytest.mark.parametrize("n,k", [
-    (10, 2),
-    (100, 5),
-    (1000, 10)
-])
+@pytest.mark.parametrize("n,k", [(10, 2), (100, 5), (1000, 10)])
 def test_kanon_violations_ranges(valid_pyp_params, n, k):
     """Test k-anonymity violations for different n,k combinations."""
-    pyp = PYP(d=valid_pyp_params['d'], α=valid_pyp_params['α'])
+    pyp = PYP(d=valid_pyp_params["d"], α=valid_pyp_params["α"])
     result = pyp.kanon_violations(n, k)
     assert 0 <= result <= 1

@@ -1,25 +1,24 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 import scipy.stats as sstats
 
 
-def frequencies(arr : np.ndarray) -> np.ndarray:
-    """
-    Calculate the sorted frequencies of unique elements in an array.
+def frequencies(arr: np.ndarray) -> np.ndarray:
+    """Calculate the sorted frequencies of unique elements in an array.
 
     Args:
         arr: 1D numpy array of observations
 
     Returns:
         ndarray: Sorted array of frequencies
+
     """
     freqs = np.unique(arr, return_counts=True)[1]
     return np.sort(freqs)
 
 
-def empirical_entropy(arr : np.ndarray, base=np.e) -> float:
-    """
-    Calculate the empirical (biased) entropy of a sample.
+def empirical_entropy(arr: np.ndarray, base=np.e) -> float:
+    """Calculate the empirical (biased) entropy of a sample.
 
     Args:
         arr: 1D numpy array of observations
@@ -30,6 +29,7 @@ def empirical_entropy(arr : np.ndarray, base=np.e) -> float:
 
     Raises:
         ValueError: If input array is empty
+
     """
     if len(arr) == 0:
         raise ValueError("Cannot compute entropy of empty array")
@@ -37,9 +37,8 @@ def empirical_entropy(arr : np.ndarray, base=np.e) -> float:
     return sstats.entropy(freqs / len(arr), base=base)
 
 
-def counts_from_dataframe(df : pd.DataFrame) -> np.ndarray:
-    """
-    Calculate frequencies of unique rows in a DataFrame.
+def counts_from_dataframe(df: pd.DataFrame) -> np.ndarray:
+    """Calculate frequencies of unique rows in a DataFrame.
 
     The function has been optimized for speed by converting the DataFrame
     to a contiguous array of bytes and then counting the frequencies of
@@ -51,6 +50,7 @@ def counts_from_dataframe(df : pd.DataFrame) -> np.ndarray:
 
     Returns:
         ndarray: Sorted array of frequencies for unique rows
+
     """
     arr = df.values
     shape_row = arr.shape[1]
@@ -60,9 +60,8 @@ def counts_from_dataframe(df : pd.DataFrame) -> np.ndarray:
     return frequencies(arr_flat)
 
 
-def uniqueness(freqs : np.ndarray) -> float:
-    """
-    Calculate the empirical uniqueness from frequency counts.
+def uniqueness(freqs: np.ndarray) -> float:
+    """Calculate the empirical uniqueness from frequency counts.
 
     Uniqueness is defined as the proportion of observations that appear
     exactly once in the sample.
@@ -75,6 +74,7 @@ def uniqueness(freqs : np.ndarray) -> float:
 
     Raises:
         ValueError: If input array is empty
+
     """
     if len(freqs) == 0:
         raise ValueError("Cannot compute uniqueness of empty array")
@@ -84,9 +84,8 @@ def uniqueness(freqs : np.ndarray) -> float:
     return (freqs == 1).sum() / total
 
 
-def correctness(freqs : np.ndarray) -> float:
-    """
-    Calculate the empirical correctness from frequency counts.
+def correctness(freqs: np.ndarray) -> float:
+    """Calculate the empirical correctness from frequency counts.
 
     Correctness is calculated as the ratio of unique frequencies to total observations.
 
@@ -98,6 +97,7 @@ def correctness(freqs : np.ndarray) -> float:
 
     Raises:
         ValueError: If input array is empty
+
     """
     if len(freqs) == 0:
         raise ValueError("Cannot compute correctness of empty array")

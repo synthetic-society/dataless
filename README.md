@@ -3,7 +3,7 @@
 [![Tests](https://github.com/synthetic-society/demo-scaling-identification/actions/workflows/tests.yml/badge.svg)](https://github.com/synthetic-society/demo-scaling-identification/actions/workflows/tests.yml)
 [![codecov](https://codecov.io/gh/synthetic-society/dataless/branch/main/graph/badge.svg)](https://codecov.io/gh/synthetic-society/dataless)
 
-A Python package for modeling and forecasting the effectiveness of identification techniques at scale. It provides tools to predict how the accuracy of identification methods changes as the population size increases.
+A Python package for modeling and forecasting the effectiveness of identification techniques at scale. It provides tools to predict how the accuracy of identification methods changes as the population size increases. The research behind this package is detailed in the paper: [A scaling law to model the effectiveness of identification techniques](https://www.nature.com/articles/s41467-024-55296-6), published in 2025 in *Nature Communications*.
 
 ## Overview
 
@@ -141,3 +141,22 @@ Please report bugs and request features using the issue tracker. When reporting 
 ## License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+
+
+## Acknowledgements
+
+If you use this package in your research, please cite:
+
+```
+@article{rocher2025scaling,
+  title={A scaling law to model the effectiveness of identification techniques},
+  author={Rocher, Luc and Hendrickx, Julien M and Montjoye, Yves-Alexandre de},
+  journal={Nature Communications},
+  volume={16},
+  number={1},
+  pages={347},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
+}
+
+```

@@ -1,6 +1,6 @@
 [project]
 name = "dataless"
-version = "0.1.0"
+version = "1.0.0"
 description = "A package for modeling and forecasting the effectiveness of identification techniques at scale"
 authors = [{name = "Luc Rocher", email = "luc@rocher.lc"}]
 requires-python = ">= 3.10"

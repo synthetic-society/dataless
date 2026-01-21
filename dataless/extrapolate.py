@@ -1,6 +1,6 @@
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-import warnings
 
 import numpy as np
 import pandas as pd

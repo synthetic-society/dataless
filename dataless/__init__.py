@@ -20,7 +20,7 @@ from dataless.extrapolate import (
     PolynomialExtrapolation,
     PYPExtrapolation,
 )
-from dataless.model import FLModel, PYP
+from dataless.model import PYP, FLModel
 
 __version__ = "0.1.0"
 

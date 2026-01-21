@@ -28,7 +28,7 @@ Key terminology:
 ### From PyPI
 
 ```bash
-pip install dataless
+pip install pydataless
 ```
 
 ### From source (development)

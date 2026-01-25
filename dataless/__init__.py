@@ -22,7 +22,7 @@ from dataless.extrapolate import (
 )
 from dataless.model import PYP, FLModel
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     # Extrapolation models

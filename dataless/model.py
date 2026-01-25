@@ -11,42 +11,42 @@ from .exceptions import ParameterError
 UnionInt = npt.NDArray[np.int_] | int
 
 
-def pyp_entropy(d: float, α: float) -> float:
+def pyp_entropy(d: float, alpha: float) -> float:
     """Calculate the expected entropy of a Pitman-Yor process.
 
     Args:
-        d: The discount parameter (0 ≤ d < 1)
-        α: The concentration parameter (α > -d)
+        d: The discount parameter (0 <= d < 1)
+        alpha: The concentration parameter (alpha > -d)
 
     Returns:
         float: The expected entropy value
 
     """
-    return digamma(α + 1) - digamma(1 - d)
+    return digamma(alpha + 1) - digamma(1 - d)
 
 
-def pyp_uniqueness(d, α, n: UnionInt):
+def pyp_uniqueness(d, alpha, n: UnionInt):
     """Calculate the expected uniqueness in a Pitman-Yor process sample.
 
     Args:
-        d: The discount parameter (0 ≤ d < 1)
-        α: The concentration parameter (α > -d)
+        d: The discount parameter (0 <= d < 1)
+        alpha: The concentration parameter (alpha > -d)
         n: Sample size or array of sample sizes
 
     Returns:
         float or ndarray: Expected uniqueness value(s)
 
     """
-    rv = np.exp(gammaln(1 + α) - gammaln(d + α) + gammaln(n + d + α - 1) - gammaln(n + α))
+    rv = np.exp(gammaln(1 + alpha) - gammaln(d + alpha) + gammaln(n + d + alpha - 1) - gammaln(n + alpha))
     return np.where(n <= 1, 1.0, rv)
 
 
-def pyp_correctness(d, α, n: UnionInt):
+def pyp_correctness(d, alpha, n: UnionInt):
     """Calculate the expected correctness in a Pitman-Yor process sample.
 
     Args:
-        d: The discount parameter (0 ≤ d < 1)
-        α: The concentration parameter (α > -d)
+        d: The discount parameter (0 <= d < 1)
+        alpha: The concentration parameter (alpha > -d)
         n: Sample size or array of sample sizes
 
     Returns:
@@ -54,9 +54,9 @@ def pyp_correctness(d, α, n: UnionInt):
 
     """
     d = np.asarray(d)
-    rv_null_d = α / n * (digamma(n + α) - digamma(α))
+    rv_null_d = alpha / n * (digamma(n + alpha) - digamma(alpha))
 
-    nom = np.exp(gammaln(1 + α) - gammaln(d + α) + gammaln(n + d + α) - gammaln(n + α)) - α
+    nom = np.exp(gammaln(1 + alpha) - gammaln(d + alpha) + gammaln(n + d + alpha) - gammaln(n + alpha)) - alpha
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         # Use rv_null_d formula when d is very small to avoid numerical instability
@@ -140,14 +140,14 @@ def freqs_from_multiplicities(mm: npt.NDArray, icts: npt.NDArray) -> npt.NDArray
 
 
 @np.vectorize
-def _scalar_kanon_violations(n: int, k: int, d: float, α: float):
+def _scalar_kanon_violations(n: int, k: int, d: float, alpha: float):
     """Calculate k-anonymity violations in a Pitman-Yor process sample.
 
     Args:
         n: Sample size
         k: Anonymity parameter
         d: Discount parameter
-        α: Concentration parameter
+        alpha: Concentration parameter
 
     Returns:
         float: Probability of k-anonymity violation
@@ -155,7 +155,7 @@ def _scalar_kanon_violations(n: int, k: int, d: float, α: float):
     """
 
     def q(x):
-        return binom.sf(k - 2, n - 1, x) * x ** (-d) * (1 - x) ** (α + d - 1)
+        return binom.sf(k - 2, n - 1, x) * x ** (-d) * (1 - x) ** (alpha + d - 1)
 
     def q_transform(u):
         rv = q(np.exp(u)) * np.exp(u)
@@ -163,10 +163,10 @@ def _scalar_kanon_violations(n: int, k: int, d: float, α: float):
             return 0.0
         return rv
 
-    rv = 1 - integrate.quad(q, 0, 1)[0] / beta(1 - d, α + d)
+    rv = 1 - integrate.quad(q, 0, 1)[0] / beta(1 - d, alpha + d)
 
     if rv > 0.99 or rv < 0.01:
-        rv = 1 - integrate.quad(q_transform, -np.inf, 0)[0] / beta(1 - d, α + d)
+        rv = 1 - integrate.quad(q_transform, -np.inf, 0)[0] / beta(1 - d, alpha + d)
 
     return rv
 
@@ -199,13 +199,13 @@ class PYP(AbstractModel):
     the distribution.
 
     Args:
-        d: Discount parameter (0 ≤ d < 1)
-        α: Concentration parameter (α > -d)
+        d: Discount parameter (0 <= d < 1)
+        alpha: Concentration parameter (alpha > -d)
         h: Entropy parameter (in nats)
-        γ: Power-law exponent
+        gamma: Power-law exponent
 
     Note:
-        Must provide either (d, α) or (h, γ) pair.
+        Must provide either (d, alpha) or (h, gamma) pair.
 
     Raises:
         ParameterError: If parameters are invalid or constraints violated.
@@ -213,58 +213,58 @@ class PYP(AbstractModel):
     """
 
     def __init__(
-        self, d: float | None = None, α: float | None = None, h: float | None = None, γ: float | None = None
+        self, d: float | None = None, alpha: float | None = None, h: float | None = None, gamma: float | None = None
     ) -> None:
         """Initialize a Pitman-Yor Process model.
 
         Args:
-            d: Discount parameter (0 ≤ d < 1)
-            α: Concentration parameter (α > -d)
+            d: Discount parameter (0 <= d < 1)
+            alpha: Concentration parameter (alpha > -d)
             h: Entropy parameter (in nats)
-            γ: Power-law exponent
+            gamma: Power-law exponent
 
         Raises:
             ParameterError: If parameters are invalid
 
         """
-        if d is not None and α is not None:
+        if d is not None and alpha is not None:
             if not (0 <= d < 1):
                 raise ParameterError(f"Discount parameter d must be in [0, 1), got {d}")
-            if not (α > -d):
-                raise ParameterError(f"Concentration α must be > -d, got α={α}, d={d}")
+            if not (alpha > -d):
+                raise ParameterError(f"Concentration alpha must be > -d, got alpha={alpha}, d={d}")
             self.d: float = d
-            self.α: float = α
-        elif h is not None and γ is not None:
+            self.alpha: float = alpha
+        elif h is not None and gamma is not None:
             if h <= 0:
                 raise ParameterError(f"Entropy h must be positive, got {h}")
-            if not (0 <= γ <= 1):
-                raise ParameterError(f"Power-law exponent γ must be in [0, 1], got {γ}")
-            self.d: float = 1 - invdigamma(digamma(1) - h * γ)
-            self.α: float = invdigamma(h * (1 - γ) + digamma(1)) - 1
+            if not (0 <= gamma <= 1):
+                raise ParameterError(f"Power-law exponent gamma must be in [0, 1], got {gamma}")
+            self.d: float = 1 - invdigamma(digamma(1) - h * gamma)
+            self.alpha: float = invdigamma(h * (1 - gamma) + digamma(1)) - 1
         else:
-            raise ParameterError("PYP() must be instantiated either with d and α or with h and γ.")
+            raise ParameterError("PYP() must be instantiated either with d and alpha or with h and gamma.")
 
     @property
     def h(self) -> float:
         """Expected entropy of the process."""
-        return pyp_entropy(self.d, self.α)
+        return pyp_entropy(self.d, self.alpha)
 
     @property
-    def γ(self) -> float:
+    def gamma(self) -> float:
         """Power-law exponent of the process."""
         return (digamma(1) - digamma(1 - self.d)) / self.h
 
     def uniqueness(self, n):
         """Calculate expected uniqueness for sample size n."""
-        return pyp_uniqueness(self.d, self.α, n)
+        return pyp_uniqueness(self.d, self.alpha, n)
 
     def correctness(self, n):
         """Calculate expected correctness for sample size n."""
-        return pyp_correctness(self.d, self.α, n)
+        return pyp_correctness(self.d, self.alpha, n)
 
     def kanon_violations(self, n, k):
         """Calculate expected k-anonymity violations for sample size n."""
-        return _scalar_kanon_violations(n, k, self.d, self.α)
+        return _scalar_kanon_violations(n, k, self.d, self.alpha)
 
 
 class FLModel(AbstractModel):

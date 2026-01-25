@@ -3,10 +3,8 @@ Shared test configuration, fixtures, and Hypothesis strategies.
 """
 
 import numpy as np
-import pandas as pd
 import pytest
 from hypothesis import strategies as st
-
 
 # =============================================================================
 # Hypothesis Strategies
@@ -15,10 +13,10 @@ from hypothesis import strategies as st
 
 @st.composite
 def pyp_params(draw):
-    """Generate valid PYP (d, α) parameter pairs satisfying α > -d."""
+    """Generate valid PYP (d, alpha) parameter pairs satisfying alpha > -d."""
     d = draw(st.floats(min_value=0.0, max_value=0.99, allow_nan=False, allow_infinity=False))
-    α = draw(st.floats(min_value=max(0.01, -d + 0.01), max_value=100.0, allow_nan=False, allow_infinity=False))
-    return {"d": d, "α": α}
+    alpha = draw(st.floats(min_value=max(0.01, -d + 0.01), max_value=100.0, allow_nan=False, allow_infinity=False))
+    return {"d": d, "alpha": alpha}
 
 
 frequency_arrays = st.lists(st.integers(min_value=1, max_value=100), min_size=1, max_size=100).map(
@@ -36,7 +34,11 @@ entropy_values = st.floats(min_value=0.1, max_value=50.0, allow_nan=False, allow
 
 @st.composite
 def training_data_strategy(draw):
-    """Generate valid training data for extrapolation models."""
+    """Generate valid training data for extrapolation models.
+
+    Returns:
+        tuple: (n_array, values_array) as numpy arrays
+    """
     n_points = draw(st.integers(min_value=3, max_value=10))
     base_sizes = sorted(
         draw(
@@ -48,7 +50,7 @@ def training_data_strategy(draw):
             )
         )
     )
-    kappas = sorted(
+    values = sorted(
         draw(
             st.lists(
                 st.floats(min_value=0.1, max_value=0.9, allow_nan=False),
@@ -58,7 +60,7 @@ def training_data_strategy(draw):
         ),
         reverse=True,
     )
-    return pd.DataFrame({"n": base_sizes, "κ": kappas})
+    return (np.array(base_sizes), np.array(values))
 
 
 # =============================================================================
@@ -98,7 +100,7 @@ def sample_sizes():
 @pytest.fixture(scope="session")
 def training_data():
     """Standard training data for models."""
-    return pd.DataFrame({"n": [10, 100, 1000], "κ": [0.8, 0.5, 0.3]})
+    return (np.array([10, 100, 1000]), np.array([0.8, 0.5, 0.3]))
 
 
 @pytest.fixture(scope="session")

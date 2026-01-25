@@ -1,14 +1,36 @@
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from typing import Literal, NamedTuple
 
 import numpy as np
-import pandas as pd
 from numpy import ndarray
 from scipy.optimize import minimize
 
 from .exceptions import OptimizationWarning, TrainingDataError
 from .model import PYP, FLModel
+
+MetricType = Literal["correctness", "uniqueness"]
+
+
+class PYPParams(NamedTuple):
+    h: float
+    gamma: float
+
+
+class FLParams(NamedTuple):
+    h: float
+
+
+class ExpDecayParams(NamedTuple):
+    a: float
+    b: float
+
+
+class PolynomialParams(NamedTuple):
+    a: float
+    b: float
+    c: float
 
 
 class AbstractExtrapolation(ABC):
@@ -18,78 +40,122 @@ class AbstractExtrapolation(ABC):
     and used to predict scaling behavior at new sample sizes.
     """
 
-    @abstractmethod
-    def __init__(self, training_data: pd.DataFrame) -> None:
-        """Initialize the extrapolation model.
+    def __init__(
+        self,
+        n: ndarray,
+        *,
+        correctness: ndarray | None = None,
+        uniqueness: ndarray | None = None,
+    ) -> None:
+        """Initialize the model with training data.
 
         Args:
-            training_data: DataFrame containing training samples
+            n: Array of sample sizes (or DataFrame with 'n' and 'κ' columns, deprecated)
+            correctness: Array of correctness values (mutually exclusive with uniqueness)
+            uniqueness: Array of uniqueness values (mutually exclusive with correctness)
 
         """
+        # Backward compatibility: accept DataFrame with 'n' and 'κ' columns
+        if hasattr(n, "columns") and "n" in n.columns and "κ" in n.columns:
+            warnings.warn(
+                "Passing a DataFrame is deprecated. Use Model(n, correctness=values) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            correctness = n["κ"].values
+            n = n["n"].values
 
-    def validate_training_data(self, dd: pd.DataFrame) -> None:
-        """Validate the training data.
+        self._init_training_data(n, correctness, uniqueness)
+        self.train()
 
-        Args:
-            dd: DataFrame containing training data
+    def _init_training_data(self, n: ndarray, correctness: ndarray | None, uniqueness: ndarray | None) -> None:
+        if correctness is not None and uniqueness is not None:
+            raise TrainingDataError("Provide either correctness or uniqueness, not both")
+        if correctness is None and uniqueness is None:
+            raise TrainingDataError("Must provide either correctness or uniqueness")
 
-        Raises:
-            TrainingDataError: If training data is invalid
+        self.n_training = np.asarray(n)
+        if correctness is not None:
+            self.metric: MetricType = "correctness"
+            self.values_training = np.asarray(correctness)
+        else:
+            self.metric = "uniqueness"
+            self.values_training = np.asarray(uniqueness)
+        self.validate_training_data(self.n_training, self.values_training, self.metric)
 
-        """
-        if not isinstance(dd, pd.DataFrame):
-            raise TrainingDataError("Training data must be a DataFrame")
-        if not all(col in dd.columns for col in ["n", "κ"]):
-            raise TrainingDataError("Training data must have columns 'n' and 'κ'")
-
-        if len(dd) < 3:
+    def validate_training_data(self, n: ndarray, values: ndarray, metric: MetricType) -> None:
+        """Validate training data arrays."""
+        if len(n) != len(values):
+            raise TrainingDataError("n and values must have same length")
+        if len(n) < 3:
             raise TrainingDataError("Training data must have at least 3 samples")
-
-        if not all(dd["κ"].between(0, 1)):
-            raise TrainingDataError("All κ values must be between 0 and 1")
-
-        if not all(dd["n"] > 0):
+        if not np.all((values >= 0) & (values <= 1)):
+            raise TrainingDataError(f"All {metric} values must be between 0 and 1")
+        if not np.all(n > 0):
             raise TrainingDataError("All n values must be positive")
 
-    @classmethod
-    @abstractmethod
-    def make_loss_fun(cls, dd: pd.DataFrame) -> Callable:
-        """Loss function for model optimization.
+    # Subclasses must define INIT_STATE and PARAMS_CLASS
+    INIT_STATE: tuple
+    PARAMS_CLASS: type[NamedTuple]
 
-        Args:
-            dd: DataFrame containing training data
-
-        Returns:
-            Callable: Loss function for optimization
-
-        """
+    def __getattr__(self, name: str):
+        """Forward parameter access to self.params for backward compatibility."""
+        if name != "params" and hasattr(self, "params") and hasattr(self.params, name):
+            return getattr(self.params, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     @abstractmethod
+    def _make_loss_fn(self) -> Callable:
+        """Create the loss function for optimization."""
+
     def train(self) -> None:
         """Train the model on the provided training data."""
+        loss_fn = self._make_loss_fn()
+        self.params = self.PARAMS_CLASS(*self._run_optimization(loss_fn, self.INIT_STATE))
 
     @abstractmethod
-    def predict(self, n: int | ndarray) -> ndarray:
-        """Predict values for new sample sizes.
+    def predict_correctness(self, n: int | ndarray) -> ndarray:
+        """Predict correctness values for new sample sizes.
 
         Args:
             n: Sample size or array of sample sizes
 
         Returns:
-            ndarray: Predicted values for the given sample sizes
+            ndarray: Predicted correctness values for the given sample sizes
 
         """
+
+    @abstractmethod
+    def predict_uniqueness(self, n: int | ndarray) -> ndarray:
+        """Predict uniqueness values for new sample sizes.
+
+        Args:
+            n: Sample size or array of sample sizes
+
+        Returns:
+            ndarray: Predicted uniqueness values for the given sample sizes
+
+        """
+
+    def predict(self, n: int | ndarray) -> ndarray:
+        """Predict values for new sample sizes based on trained metric.
+
+        Args:
+            n: Sample size or array of sample sizes
+
+        Returns:
+            ndarray: Predicted uniqueness/correctness values for the given sample sizes
+        """
+
+        if self.metric == "correctness":
+            return self.predict_correctness(n)
+        elif self.metric == "uniqueness":
+            return self.predict_uniqueness(n)
+        else:
+            raise ValueError(f"Unknown metric: {self.metric}")
 
     def test(self, n: int | ndarray) -> ndarray:
-        """Deprecated: Use predict() instead.
-
-        Args:
-            n: Sample size or array of sample sizes
-
-        Returns:
-            ndarray: Predicted values for the given sample sizes
-
-        """
+        """Deprecated: Use predict() instead."""
         warnings.warn(
             "test() is deprecated and will be removed in a future version. Use predict() instead.",
             DeprecationWarning,
@@ -97,7 +163,20 @@ class AbstractExtrapolation(ABC):
         )
         return self.predict(n)
 
-    @abstractmethod
+    def _run_optimization(self, loss_fn: Callable, init_state: tuple | list) -> ndarray:
+        res = minimize(loss_fn, init_state, method="Nelder-Mead")
+        if not res.success:
+            warnings.warn(f"Optimization did not converge: {res.message}", OptimizationWarning, stacklevel=3)
+        self._optimization_result = res
+        return res.x
+
+    # Class attributes for summary() - override in subclasses
+    MODEL_NAME: str = "Extrapolation Model"
+
+    def _get_param_str(self) -> str:
+        """Return formatted parameter string for summary."""
+        return ", ".join(f"{name}={getattr(self.params, name):.4f}" for name in self.params._fields)
+
     def summary(self) -> str:
         """Return a human-readable summary of the fitted model.
 
@@ -105,397 +184,181 @@ class AbstractExtrapolation(ABC):
             str: Model summary including parameters and training info
 
         """
+        header = self.MODEL_NAME
+        n_min, n_max = self.n_training.min(), self.n_training.max()
+        return (
+            f"{header}\n{'=' * len(header)}\n"
+            f"Trained on: {self.metric}\n"
+            f"Parameters: {self._get_param_str()}\n"
+            f"Training points: {len(self.n_training)}\n"
+            f"Training range: n in [{n_min:,}, {n_max:,}]"
+        )
 
 
-class PYPExtrapolation(AbstractExtrapolation):
+class StatisticalModelMixin:
+    """Mixin for statistical models that can predict both metrics from fitted parameters."""
+
+    @abstractmethod
+    def _get_model(self):
+        """Return the underlying statistical model instance."""
+
+    def _predict_with_model(self, method: str, n):
+        n_array = np.atleast_1d(n)
+        result = getattr(self._get_model(), method)(n_array)
+        return result[0] if np.isscalar(n) else result
+
+    def predict_correctness(self, n: int | ndarray) -> ndarray:
+        """Predict correctness values for new sample sizes.
+
+        Args:
+            n: Sample size or array of sample sizes
+
+        Returns:
+            ndarray: Predicted correctness values
+
+        """
+        return self._predict_with_model("correctness", n)
+
+    def predict_uniqueness(self, n: int | ndarray) -> ndarray:
+        """Predict uniqueness values for new sample sizes.
+
+        Args:
+            n: Sample size or array of sample sizes
+
+        Returns:
+            ndarray: Predicted uniqueness values
+
+        """
+        return self._predict_with_model("uniqueness", n)
+
+
+class PYPExtrapolation(StatisticalModelMixin, AbstractExtrapolation):
     """Extrapolation model based on Pitman-Yor Process.
 
     This model fits a Pitman-Yor Process to training data and uses it
     to predict scaling behavior at new sample sizes.
     """
 
-    INIT_STATE = (12, 0.26)  # Initial state for optimization (h, γ)
+    INIT_STATE = (12, 0.26)
+    PARAMS_CLASS = PYPParams
+    MODEL_NAME = "PYP Extrapolation Model"
 
-    def __init__(self, training_data: pd.DataFrame) -> None:
-        """Initialize PYP extrapolation model.
+    def _make_loss_fn(self) -> Callable:
+        n_range, emp_values, metric = self.n_training, self.values_training, self.metric
 
-        Args:
-            training_data: DataFrame with columns 'n' (sample sizes) and 'κ' (observations)
-
-        """
-        self.training_data = training_data
-        self.validate_training_data(training_data)
-
-        self.train()
-
-    @staticmethod
-    def make_loss_fun(dd: pd.DataFrame) -> Callable:
-        """Create loss function for PYP parameter optimization.
-
-        Args:
-            dd: DataFrame with columns 'n' and 'κ'
-
-        Returns:
-            Callable: Loss function for optimization
-
-        """
-        n_range = dd.n.to_numpy()
-        emp_κ = dd["κ"].values
-
-        def loss_fun(x):
-            # Return large value for invalid parameter combinations during optimization
-            h, γ = x[0], x[1]
-            if h <= 0 or γ < 0 or γ > 1:
+        def loss_fn(x):
+            h, gamma = x[0], x[1]
+            if h <= 0 or gamma < 0 or gamma > 1:
                 return 1e10
             try:
-                expected_κ = PYP(h=h, γ=γ).correctness(n_range)
-                return (np.log(n_range) * (expected_κ - emp_κ) ** 2).mean()
+                expected = getattr(PYP(h=h, gamma=gamma), metric)(n_range)
+                return (np.log(n_range) * (expected - emp_values) ** 2).mean()
             except Exception:
                 return 1e10
 
-        return loss_fun
+        return loss_fn
 
-    def train(self) -> None:
-        """Train the model by optimizing PYP parameters.
-
-        Uses Nelder-Mead optimization to find optimal h and γ values.
-
-        Warns:
-            OptimizationWarning: If optimization does not converge (as warning)
-
-        """
-        loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, type(self).INIT_STATE, method="Nelder-Mead")
-        if not res.success:
-            warnings.warn(
-                f"Optimization did not converge: {res.message}",
-                OptimizationWarning,
-                stacklevel=2,
-            )
-        self.h, self.γ = res.x
-        self._optimization_result = res
-
-    def predict(self, n: int | ndarray) -> ndarray:
-        """Predict correctness values for new sample sizes.
-
-        Args:
-            n: Sample size or array of sample sizes
-
-        Returns:
-            ndarray: Predicted correctness values
-
-        """
-        n_array = np.atleast_1d(n)
-        result = PYP(h=self.h, γ=self.γ).correctness(n_array)
-        return result[0] if np.isscalar(n) else result
-
-    def summary(self) -> str:
-        """Return a human-readable summary of the fitted model.
-
-        Returns:
-            str: Model summary including parameters and training info
-
-        """
-        n_min = self.training_data["n"].min()
-        n_max = self.training_data["n"].max()
-        return (
-            f"PYP Extrapolation Model\n"
-            f"=======================\n"
-            f"Parameters: h={self.h:.4f}, γ={self.γ:.4f}\n"
-            f"Training points: {len(self.training_data)}\n"
-            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
-        )
+    def _get_model(self):
+        return PYP(h=self.h, gamma=self.gamma)
 
 
-class FLExtrapolation(AbstractExtrapolation):
+class FLExtrapolation(StatisticalModelMixin, AbstractExtrapolation):
     """Extrapolation model based on baseline entropy model.
 
     This model provides a simpler alternative to PYP extrapolation,
     using only entropy-based calculations.
     """
 
-    INIT_STATE = [12.0]  # Initial entropy value for optimization
+    INIT_STATE = (12.0,)
+    PARAMS_CLASS = FLParams
+    MODEL_NAME = "FL Extrapolation Model"
 
-    def __init__(self, training_data):
-        """Initialize FL extrapolation model.
+    def _make_loss_fn(self) -> Callable:
+        n_range, emp_values, metric = self.n_training, self.values_training, self.metric
 
-        Args:
-            training_data: DataFrame with columns 'n' and 'κ'
+        def loss_fn(x):
+            expected = getattr(FLModel(h=float(x[0])), metric)(n_range)
+            return (np.log(n_range) * (expected - emp_values) ** 2).mean()
 
-        """
-        self.training_data = training_data
-        self.validate_training_data(training_data)
+        return loss_fn
 
-        self.train()
+    def _get_model(self):
+        return FLModel(h=self.h)
 
-    @classmethod
-    def make_loss_fun(cls, dd):
-        """Loss function for entropy parameter optimization.
 
-        Args:
-            dd: DataFrame with columns 'n' and 'κ'
+class CurveFitExtrapolationMixin:
+    """Mixin for curve-fitting models that can only predict their trained metric."""
 
-        Returns:
-            Callable: Loss function for optimization
+    metric: MetricType
 
-        """
-        n_range = dd.n.to_numpy()
-        emp_κ = dd["κ"].to_numpy()
+    @staticmethod
+    @abstractmethod
+    def _compute_static(params: tuple, n: ndarray) -> ndarray:
+        """Compute raw prediction from parameters (subclass implements)."""
 
-        def loss_fun(x):
-            expected_κ = FLModel(h=float(x[0])).correctness(n_range)
-            return (np.log(n_range) * (expected_κ - emp_κ) ** 2).mean()
+    def _compute(self, n: ndarray) -> ndarray:
+        """Compute raw prediction using fitted parameters."""
+        result = self._compute_static(tuple(self.params), n)
+        return np.clip(result, 0, 1)
 
-        return loss_fun
+    def _make_loss_fn(self) -> Callable:
+        """Create loss function for curve-fitting optimization."""
 
-    def train(self):
-        """Train the model by optimizing the entropy parameter.
+        def loss_fn(x):
+            est_values = self._compute_static(tuple(x), self.n_training)
+            return (np.log(self.n_training) * (est_values - self.values_training) ** 2).mean()
 
-        Uses Nelder-Mead optimization to find optimal entropy value.
-        """
-        loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, self.INIT_STATE, method="Nelder-Mead")
-        if not res.success:
-            warnings.warn(
-                f"Optimization did not converge: {res.message}",
-                OptimizationWarning,
-                stacklevel=2,
+        return loss_fn
+
+    def predict_correctness(self, n):
+        if self.metric != "correctness":
+            raise NotImplementedError(
+                f"This model was trained on {self.metric}. "
+                f"Use predict_{self.metric}() or train a new model on correctness data."
             )
-        self.h = float(res.x[0])
-        self._optimization_result = res
+        return self._compute(n)
 
-    def predict(self, n):
-        """Predict correctness values for new sample sizes.
-
-        Args:
-            n: Sample size or array of sample sizes
-
-        Returns:
-            ndarray: Predicted correctness values
-
-        """
-        n_array = np.atleast_1d(n)
-        result = FLModel(h=self.h).correctness(n_array)
-        return result[0] if np.isscalar(n) else result
-
-    def summary(self) -> str:
-        """Return a human-readable summary of the fitted model.
-
-        Returns:
-            str: Model summary including parameters and training info
-
-        """
-        n_min = self.training_data["n"].min()
-        n_max = self.training_data["n"].max()
-        return (
-            f"FL Extrapolation Model\n"
-            f"======================\n"
-            f"Parameters: h={self.h:.4f}\n"
-            f"Training points: {len(self.training_data)}\n"
-            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
-        )
+    def predict_uniqueness(self, n):
+        if self.metric != "uniqueness":
+            raise NotImplementedError(
+                f"This model was trained on {self.metric}. "
+                f"Use predict_{self.metric}() or train a new model on uniqueness data."
+            )
+        return self._compute(n)
 
 
-class ExpDecayExtrapolation(AbstractExtrapolation):
+class ExpDecayExtrapolation(CurveFitExtrapolationMixin, AbstractExtrapolation):
     """Exponential decay-based extrapolation model.
 
     This model fits an exponential decay curve to the training data
-    for predicting scaling behavior.
+    for predicting scaling behavior. Can be trained on either correctness
+    or uniqueness, but can only predict the metric it was trained on.
     """
 
-    def __init__(self, training_data):
-        """Initialize exponential decay model.
-
-        Args:
-            training_data: DataFrame with columns 'n' and 'κ'
-
-        """
-        self.training_data = training_data
-        self.validate_training_data(training_data)
-
-        self.train()
+    INIT_STATE = (1, 1)
+    PARAMS_CLASS = ExpDecayParams
+    MODEL_NAME = "ExpDecay Extrapolation Model"
 
     @staticmethod
-    def correctness(a, b, n):
-        """Compute correctness using exponential decay formula.
-
-        Args:
-            a: Amplitude parameter
-            b: Decay rate parameter
-            n: Sample size(s)
-
-        Returns:
-            ndarray: Correctness values
-
-        """
+    def _compute_static(params: tuple, n: ndarray) -> ndarray:
+        a, b = params
         return a * np.exp(-b * np.sqrt(n)) + (1 - a * np.exp(-b))
 
-    @classmethod
-    def make_loss_fun(cls, dd):
-        """Loss function for exponential decay parameter optimization.
 
-        Args:
-            dd: DataFrame with columns 'n' and 'κ'
-
-        Returns:
-            Callable: Loss function for optimization
-
-        """
-        n_range = dd.n.to_numpy()
-        emp_κ = dd["κ"].to_numpy()
-
-        def loss_fun(x):
-            est_κ = cls.correctness(x[0], x[1], n_range)
-            return (np.log(n_range) * (est_κ - emp_κ) ** 2).mean()
-
-        return loss_fun
-
-    def train(self):
-        """Train the model by optimizing exponential decay parameters.
-
-        Uses Nelder-Mead optimization to find optimal a and b values.
-        """
-        loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, (1, 1), method="Nelder-Mead")
-        if not res.success:
-            warnings.warn(
-                f"Optimization did not converge: {res.message}",
-                OptimizationWarning,
-                stacklevel=2,
-            )
-        self.a, self.b = res.x
-        self._optimization_result = res
-
-    def predict(self, n):
-        """Predict correctness values for new sample sizes.
-
-        Args:
-            n: Sample size or array of sample sizes
-
-        Returns:
-            ndarray: Predicted correctness values, clipped to [0,1]
-
-        """
-        n_array = np.atleast_1d(n)
-        result = np.clip(type(self).correctness(self.a, self.b, n_array), 0, 1)
-        return result[0] if np.isscalar(n) else result
-
-    def summary(self) -> str:
-        """Return a human-readable summary of the fitted model.
-
-        Returns:
-            str: Model summary including parameters and training info
-
-        """
-        n_min = self.training_data["n"].min()
-        n_max = self.training_data["n"].max()
-        return (
-            f"Exponential Decay Extrapolation Model\n"
-            f"=====================================\n"
-            f"Parameters: a={self.a:.4f}, b={self.b:.4f}\n"
-            f"Training points: {len(self.training_data)}\n"
-            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
-        )
-
-
-class PolynomialExtrapolation(AbstractExtrapolation):
+class PolynomialExtrapolation(CurveFitExtrapolationMixin, AbstractExtrapolation):
     """Polynomial fit-based extrapolation model.
 
     This model fits a third-degree polynomial to the log-transformed data
-    for predicting scaling behavior.
+    for predicting scaling behavior. Can be trained on either correctness
+    or uniqueness, but can only predict the metric it was trained on.
     """
 
-    def __init__(self, training_data):
-        """Initialize polynomial extrapolation model.
-
-        Args:
-            training_data: DataFrame with columns 'n' and 'κ'
-
-        """
-        self.training_data = training_data
-        self.validate_training_data(training_data)
-
-        self.train()
+    INIT_STATE = (0, -1, -1)
+    PARAMS_CLASS = PolynomialParams
+    MODEL_NAME = "Polynomial Extrapolation Model"
 
     @staticmethod
-    def correctness(a, b, c, n):
-        """Compute correctness using polynomial formula.
-
-        Args:
-            a: Cubic coefficient
-            b: Quadratic coefficient
-            c: Linear coefficient
-            n: Sample size(s)
-
-        Returns:
-            ndarray: Correctness values
-
-        """
-        return a * np.log10(n) ** 3 + b * np.log10(n) ** 2 + c * np.log10(n) + 1
-
-    @classmethod
-    def make_loss_fun(cls, dd):
-        """Loss function for polynomial parameter optimization.
-
-        Args:
-            dd: DataFrame with columns 'n' and 'κ'
-
-        Returns:
-            Callable: Loss function for optimization
-
-        """
-        n_range = dd.n.to_numpy()
-        emp_κ = dd["κ"].to_numpy()
-
-        def loss_fun(x):
-            est_κ = cls.correctness(x[0], x[1], x[2], n_range)
-            return (np.log(n_range) * (est_κ - emp_κ) ** 2).mean()
-
-        return loss_fun
-
-    def train(self):
-        """Train the model by optimizing polynomial coefficients.
-
-        Uses Nelder-Mead optimization to find optimal polynomial coefficients.
-        """
-        loss_function = type(self).make_loss_fun(self.training_data)
-        res = minimize(loss_function, (0, -1, -1), method="Nelder-Mead")
-        if not res.success:
-            warnings.warn(
-                f"Optimization did not converge: {res.message}",
-                OptimizationWarning,
-                stacklevel=2,
-            )
-        self.a, self.b, self.c = res.x
-        self._optimization_result = res
-
-    def predict(self, n):
-        """Predict correctness values for new sample sizes.
-
-        Args:
-            n: Sample size or array of sample sizes
-
-        Returns:
-            ndarray: Predicted correctness values, clipped to [0,1]
-
-        """
-        n_array = np.atleast_1d(n)
-        result = np.clip(type(self).correctness(self.a, self.b, self.c, n_array), 0, 1)
-        return result[0] if np.isscalar(n) else result
-
-    def summary(self) -> str:
-        """Return a human-readable summary of the fitted model.
-
-        Returns:
-            str: Model summary including parameters and training info
-
-        """
-        n_min = self.training_data["n"].min()
-        n_max = self.training_data["n"].max()
-        return (
-            f"Polynomial Extrapolation Model\n"
-            f"==============================\n"
-            f"Parameters: a={self.a:.4f}, b={self.b:.4f}, c={self.c:.4f}\n"
-            f"Training points: {len(self.training_data)}\n"
-            f"Training range: n ∈ [{n_min:,}, {n_max:,}]"
-        )
+    def _compute_static(params: tuple, n: ndarray) -> ndarray:
+        a, b, c = params
+        log_n = np.log10(n)
+        return a * log_n**3 + b * log_n**2 + c * log_n + 1

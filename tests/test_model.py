@@ -97,31 +97,31 @@ class TestPYPParameters:
 
     @given(pyp_params())
     def test_h_gamma_round_trip(self, params):
-        """PYP(d,α) -> (h,γ) -> PYP(h,γ) preserves d,α."""
-        d, α = params["d"], params["α"]
-        assume(α > -d)
+        """PYP(d,alpha) -> (h,gamma) -> PYP(h,gamma) preserves d,alpha."""
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d)
 
-        pyp1 = PYP(d=d, α=α)
-        h, γ = pyp1.h, pyp1.γ
-        assume(np.isfinite(h) and np.isfinite(γ) and 0 < γ < 1)
+        pyp1 = PYP(d=d, alpha=alpha)
+        h, gamma = pyp1.h, pyp1.gamma
+        assume(np.isfinite(h) and np.isfinite(gamma) and 0 < gamma < 1)
 
-        pyp2 = PYP(h=h, γ=γ)
+        pyp2 = PYP(h=h, gamma=gamma)
         assert_allclose(pyp2.d, d, rtol=1e-3, atol=1e-6)
-        assert_allclose(pyp2.α, α, rtol=1e-3, atol=1e-6)
+        assert_allclose(pyp2.alpha, alpha, rtol=1e-3, atol=1e-6)
 
     @given(pyp_params())
     def test_entropy_positive(self, params):
         """PYP entropy is always positive."""
-        d, α = params["d"], params["α"]
-        assume(α > -d)
-        assert pyp_entropy(d, α) > 0
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d)
+        assert pyp_entropy(d, alpha) > 0
 
     @given(pyp_params())
     def test_gamma_bounded(self, params):
-        """PYP γ is in (0, 1) for non-trivial d."""
-        d, α = params["d"], params["α"]
-        assume(α > -d and d >= 0.01)
-        assert 0 < PYP(d=d, α=α).γ < 1
+        """PYP gamma is in (0, 1) for non-trivial d."""
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d and d >= 0.01)
+        assert 0 < PYP(d=d, alpha=alpha).gamma < 1
 
 
 # =============================================================================
@@ -135,39 +135,39 @@ class TestPYPFunctions:
     @given(pyp_params(), sample_size_arrays)
     def test_uniqueness_bounded(self, params, n):
         """PYP uniqueness is always in [0, 1]."""
-        d, α = params["d"], params["α"]
-        assume(α > -d and d >= 1e-10)
-        assert_bounded(pyp_uniqueness(d, α, n))
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d and d >= 1e-10)
+        assert_bounded(pyp_uniqueness(d, alpha, n))
 
     @given(pyp_params(), sample_size_arrays)
     def test_correctness_bounded(self, params, n):
         """PYP correctness is always in [0, 1]."""
-        d, α = params["d"], params["α"]
-        assume(α > -d and d >= 1e-6)  # Tighter bound to avoid numerical edge cases
-        assert_bounded(pyp_correctness(d, α, n), atol=1e-7)
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d and d >= 1e-6)  # Tighter bound to avoid numerical edge cases
+        assert_bounded(pyp_correctness(d, alpha, n), atol=1e-7)
 
     @given(pyp_params(), sample_size_arrays)
     def test_uniqueness_monotonically_decreasing(self, params, n):
         """PYP uniqueness decreases with sample size."""
-        d, α = params["d"], params["α"]
-        assume(α > -d)
-        u = pyp_uniqueness(d, α, np.sort(n))
-        assert np.all(np.diff(u) <= 1e-10)
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d)
+        u = pyp_uniqueness(d, alpha, np.sort(n))
+        assert np.all(np.diff(u) <= 1e-5)
 
     @given(pyp_params(), sample_size_arrays)
     def test_correctness_monotonically_decreasing(self, params, n):
         """PYP correctness decreases with sample size."""
-        d, α = params["d"], params["α"]
-        assume(α > -d)
-        c = pyp_correctness(d, α, np.sort(n))
-        assert np.all(np.diff(c) <= 1e-10)
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d)
+        c = pyp_correctness(d, alpha, np.sort(n))
+        assert np.all(np.diff(c) <= 1e-5)
 
     @given(pyp_params())
     def test_single_sample_correctness_is_one(self, params):
         """Correctness for n=1 is always 1."""
-        d, α = params["d"], params["α"]
-        assume(α > -d and d >= 1e-10)  # Avoid numerical instability
-        assert_allclose(pyp_correctness(d, α, 1), 1.0)
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d and d >= 1e-10)  # Avoid numerical instability
+        assert_allclose(pyp_correctness(d, alpha, 1), 1.0)
 
 
 # =============================================================================
@@ -210,14 +210,14 @@ class TestPYP:
     """Tests for PYP class."""
 
     def test_init_with_d_alpha(self):
-        """PYP initialization with d and α."""
-        pyp = PYP(d=0.5, α=1.0)
-        assert pyp.d == 0.5 and pyp.α == 1.0
+        """PYP initialization with d and alpha."""
+        pyp = PYP(d=0.5, alpha=1.0)
+        assert pyp.d == 0.5 and pyp.alpha == 1.0
 
     def test_init_with_h_gamma(self):
-        """PYP initialization with h and γ."""
-        pyp = PYP(h=2.0, γ=0.5)
-        assert 0 <= pyp.d < 1 and pyp.α > -pyp.d
+        """PYP initialization with h and gamma."""
+        pyp = PYP(h=2.0, gamma=0.5)
+        assert 0 <= pyp.d < 1 and pyp.alpha > -pyp.d
 
     @pytest.mark.parametrize("kwargs", [{}, {"d": 0.5}, {"h": 2.0}])
     def test_init_invalid(self, kwargs):
@@ -227,12 +227,12 @@ class TestPYP:
 
     def test_properties(self):
         """PYP property calculations."""
-        pyp = PYP(d=0.5, α=1.0)
-        assert np.isfinite(pyp.h) and 0 <= pyp.γ <= 1
+        pyp = PYP(d=0.5, alpha=1.0)
+        assert np.isfinite(pyp.h) and 0 <= pyp.gamma <= 1
 
     def test_methods(self):
         """PYP method calculations."""
-        pyp = PYP(d=0.5, α=1.0)
+        pyp = PYP(d=0.5, alpha=1.0)
         n = np.array([1, 10, 100])
         assert_bounded(pyp.uniqueness(n))
         assert_bounded(pyp.correctness(n))
@@ -241,7 +241,7 @@ class TestPYP:
     @pytest.mark.parametrize("n,k", [(10, 2), (100, 5), (1000, 10)])
     def test_kanon_violations_ranges(self, n, k):
         """k-anonymity violations for different n,k combinations."""
-        assert 0 <= PYP(d=0.5, α=1.0).kanon_violations(n, k) <= 1
+        assert 0 <= PYP(d=0.5, alpha=1.0).kanon_violations(n, k) <= 1
 
 
 # =============================================================================

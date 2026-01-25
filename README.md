@@ -57,60 +57,57 @@ The main use case is predicting how identification accuracy degrades as populati
 
 ```python
 from dataless import PYPExtrapolation
-import pandas as pd
 import numpy as np
 
 # Step 1: Create training data with observed accuracy at small scales
-# n = population size, κ = identification accuracy (fraction correctly identified)
-data = pd.DataFrame({
-    "n": [10, 50, 100, 500],
-    "κ": [0.99, 0.97, 0.95, 0.90]
-})
+# n = population size, correctness = identification accuracy (fraction correctly identified)
+n = [10, 50, 100, 500]
+correctness = [0.99, 0.97, 0.95, 0.90]
 
 # Step 2: Fit the model
-model = PYPExtrapolation(data)
+model = PYPExtrapolation(n, correctness=correctness)
 
 # Step 3: Predict accuracy at larger scales
 large_populations = np.array([1_000, 10_000, 100_000, 1_000_000])
 predictions = model.predict(large_populations)
 print(predictions)
-# Example output: [0.86, 0.78, 0.71, 0.65]
+# Example output: [0.87505023 0.79165748 0.71371539 0.64308667]
 
 # Step 4: Get a summary of the fitted model
 print(model.summary())
 ```
 
+You can also train from uniqueness scores:
+
+```python
+n = [10, 50, 100, 500]
+uniqueness = [0.95, 0.90, 0.85, 0.80] 
+
+model = PYPExtrapolation(n, uniqueness=uniqueness)
+
+large_populations = np.array([1_000, 10_000, 100_000, 1_000_000])
+predictions = model.predict(large_populations)
+
+print(predictions)
+# Example output: [0.77117386 0.68920739 0.61585755 0.55030553]
+``` 
+
+
 ### Understanding the Output
 
-- **κ (kappa)** values range from 0 to 1, where 1 means perfect identification
-- The model predicts how κ decreases as population size grows
+- **correctness** values range from 0 to 1, where 1 means perfect identification
+- The model predicts how the correctness decreases as population size grows
 - This helps assess whether an identification method will remain effective at scale
 
 ### Available Models
 
 | Model | Description | Best for |
 |-------|-------------|----------|
-| `PYPExtrapolation` | Pitman-Yor Process (recommended) | Most scenarios |
+| `PYPExtrapolation` | Pitman-Yor Process | Most scenarios |
 | `FLExtrapolation` | Entropy-based baseline | Baseline |
 | `ExpDecayExtrapolation` | Exponential decay | Baseline |
 | `PolynomialExtrapolation` | Polynomial fit | Baseline |
 
-## Usage
-
-### Basic Example
-```python
-from dataless import PYPExtrapolation
-import pandas as pd
-import numpy as np
-
-# Create sample data: identification accuracy at different gallery sizes
-d = pd.DataFrame({'n': [1, 10, 100], 'κ': [1, 0.99, 0.95]})
-
-# Train model and predict accuracy at larger scales
-model = PYPExtrapolation(d)
-model.predict(np.array([1, 10, 100, 1000, 10000]))
-# array([1.        , 0.99000117, 0.95000214, 0.88420427, 0.81462242])
-```
 
 ## Development
 

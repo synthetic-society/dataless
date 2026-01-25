@@ -11,6 +11,46 @@ from .exceptions import ParameterError
 UnionInt = npt.NDArray[np.int_] | int
 
 
+def _log_gamma_ratio(z, m, *, shift_target=2.0, m_taylor=1e-3):
+    """Robust log Γ(z+m) - log Γ(z) for z>0 and z+m>0."""
+    z = np.asarray(z, dtype=np.float64)
+    m = np.asarray(m, dtype=np.float64)
+
+    zp = z + m
+    if np.any(z <= 0) or np.any(zp <= 0):
+        raise ValueError("Require z>0 and z+m>0 for _log_gamma_ratio.")
+
+    # shift amount k so that min(z+k, z+m+k) >= shift_target
+    min_arg = np.minimum(z, zp)
+    k = np.maximum(0.0, np.ceil(shift_target - min_arg)).astype(np.int64)
+    zk = z + k
+    zpk = zp + k  # = z+m+k
+
+    # core term evaluated at safe arguments
+    # Use Taylor when |m| is small, OR when z is large (Taylor converges faster for large z)
+    # For large z, gammaln differences lose precision due to catastrophic cancellation
+    use_taylor = (np.abs(m) <= m_taylor) | (zk >= 1e6)
+    core = np.where(
+        use_taylor,
+        m * digamma(zk) + 0.5 * (m * m) * polygamma(1, zk) + (m * m * m) * (1.0 / 6.0) * polygamma(2, zk),
+        gammaln(zpk) - gammaln(zk),
+    )
+
+    # adjustment sum: sum_{i=0}^{k-1} log((z+i)/(z+m+i))
+    kmax = int(np.max(k)) if np.size(k) else 0
+    if kmax == 0:
+        return core
+
+    adj = np.zeros_like(core)
+    # accumulate in a vectorized way; k is usually tiny (<=2) for problematic regimes
+    for i in range(kmax):
+        mask = k > i
+        if np.any(mask):
+            adj = np.where(mask, adj + np.log(z + i) - np.log(zp + i), adj)
+
+    return core + adj
+
+
 def pyp_entropy(d: float, alpha: float) -> float:
     """Calculate the expected entropy of a Pitman-Yor process.
 
@@ -25,43 +65,87 @@ def pyp_entropy(d: float, alpha: float) -> float:
     return digamma(alpha + 1) - digamma(1 - d)
 
 
-def pyp_uniqueness(d, alpha, n: UnionInt):
-    """Calculate the expected uniqueness in a Pitman-Yor process sample.
+def pyp_uniqueness(d, alpha, n):
+    """Stable version of pyp_uniqueness for arbitrary n (scalar or array)."""
+    n_arr = np.asarray(n, dtype=np.float64)
+    d = np.float64(d)
+    alpha = np.float64(alpha)
 
-    Args:
-        d: The discount parameter (0 <= d < 1)
-        alpha: The concentration parameter (alpha > -d)
-        n: Sample size or array of sample sizes
+    out = np.ones_like(n_arr, dtype=np.float64)
+    mask = n_arr > 1
+    if not np.any(mask):
+        return out
 
-    Returns:
-        float or ndarray: Expected uniqueness value(s)
+    nm = n_arr[mask]
 
-    """
-    rv = np.exp(gammaln(1 + alpha) - gammaln(d + alpha) + gammaln(n + d + alpha - 1) - gammaln(n + alpha))
-    return np.clip(np.where(n <= 1, 1.0, rv), 0.0, 1.0)
+    if alpha == 0.0:
+        logU = _log_gamma_ratio(n_arr[mask], d - 1.0) - gammaln(d)
+        out[mask] = 1.0 + np.expm1(logU)
+        return np.clip(out, 0.0, 1.0)
+
+    if d == 0.0:
+        out[mask] = alpha / (nm + alpha - 1.0)
+        return np.clip(out, 0.0, 1.0)
+
+    logU = _log_gamma_ratio(alpha + d, 1.0 - d) + _log_gamma_ratio(nm + alpha, d - 1.0)
+    out[mask] = np.exp(logU)
+    return np.clip(out, 0.0, 1.0)
 
 
-def pyp_correctness(d, alpha, n: UnionInt):
-    """Calculate the expected correctness in a Pitman-Yor process sample.
+def _stable_R_minus_alpha(logR, alpha):
+    R_is_finite = np.isfinite(logR)
+    if not np.all(R_is_finite):
+        return np.exp(logR) - alpha
 
-    Args:
-        d: The discount parameter (0 <= d < 1)
-        alpha: The concentration parameter (alpha > -d)
-        n: Sample size or array of sample sizes
+    if alpha == 0.0:
+        return np.exp(logR)
 
-    Returns:
-        float or ndarray: Expected correctness value(s)
+    if alpha < 0.0:
+        return np.exp(np.logaddexp(logR, np.log(-alpha)))
 
-    """
-    d = np.asarray(d)
-    rv_null_d = alpha / n * (digamma(n + alpha) - digamma(alpha))
+    loga = np.log(alpha)
+    t = loga - logR  # log(alpha/R)
+    return np.exp(logR) * (-np.expm1(t))
 
-    nom = np.exp(gammaln(1 + alpha) - gammaln(d + alpha) + gammaln(n + d + alpha) - gammaln(n + alpha)) - alpha
 
-    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        # Use rv_null_d formula when d is very small to avoid numerical instability
-        result = np.where(n <= 1, 1.0, np.where(d <= 1e-10, rv_null_d, np.divide(nom, (n * d))))
-        return np.clip(result, 0.0, 1.0)
+def pyp_correctness(d, alpha, n):
+    n_arr = np.asarray(n, dtype=np.float64)
+    d = float(d)
+    alpha = float(alpha)
+
+    out = np.ones_like(n_arr, dtype=np.float64)
+    mask = n_arr > 1
+    if not np.any(mask):
+        return out
+
+    nm = n_arr[mask]
+
+    if d == 0.0:
+        if alpha <= 1e-300:
+            out[mask] = 0.0  # Degenerate case: both d≈0 and α≈0
+        else:
+            dpsi = digamma(nm + alpha) - digamma(alpha)
+            out[mask] = (alpha / nm) * dpsi
+        return np.clip(out, 0.0, 1.0)
+
+    if alpha == 0.0:
+        logC = _log_gamma_ratio(nm + 1.0, d - 1.0) - gammaln(d + 1.0)
+        out[mask] = 1.0 + np.expm1(logC)
+        return np.clip(out, 0.0, 1.0)
+
+    logR = _log_gamma_ratio(alpha + d, 1.0 - d) + _log_gamma_ratio(nm + alpha, d)
+
+    if abs(d) <= 1e-6 and alpha > 1e-10:
+        dpsi = digamma(nm + alpha) - digamma(alpha)
+        k0 = (alpha / nm) * dpsi
+        out[mask] = np.clip(k0, 0.0, 1.0)
+        return out
+
+    nom = _stable_R_minus_alpha(logR, alpha)
+    k = nom / (nm * d)
+
+    out[mask] = np.clip(k, 0.0, 1.0)
+    return out
 
 
 @np.vectorize

@@ -17,9 +17,32 @@ from dataless.model import (
 from hypothesis import assume, given
 from hypothesis import strategies as st
 from numpy.testing import assert_allclose, assert_array_equal
-from scipy.special import digamma
+from scipy.special import digamma, gammaln
 
 from conftest import assert_bounded, entropy_values, frequency_arrays, pyp_params, sample_size_arrays
+
+# =============================================================================
+# Reference (Unstable) Implementations for Comparison
+# =============================================================================
+
+
+def pyp_uniqueness_unstable(d, alpha, n):
+    """Original unstable implementation for comparison testing."""
+    rv = np.exp(gammaln(1 + alpha) - gammaln(d + alpha) + gammaln(n + d + alpha - 1) - gammaln(n + alpha))
+    return np.clip(np.where(n <= 1, 1.0, rv), 0.0, 1.0)
+
+
+def pyp_correctness_unstable(d, alpha, n):
+    """Original unstable implementation for comparison testing."""
+    d = np.asarray(d)
+    rv_null_d = alpha / n * (digamma(n + alpha) - digamma(alpha))
+
+    nom = np.exp(gammaln(1 + alpha) - gammaln(d + alpha) + gammaln(n + d + alpha) - gammaln(n + alpha)) - alpha
+
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        result = np.where(n <= 1, 1.0, np.where(d <= 1e-10, rv_null_d, np.divide(nom, (n * d))))
+        return np.clip(result, 0.0, 1.0)
+
 
 # =============================================================================
 # Property-Based Tests: Inverse Digamma
@@ -168,6 +191,70 @@ class TestPYPFunctions:
         d, alpha = params["d"], params["alpha"]
         assume(alpha > -d and d >= 1e-10)  # Avoid numerical instability
         assert_allclose(pyp_correctness(d, alpha, 1), 1.0)
+
+
+# =============================================================================
+# Stable vs Unstable Implementation Comparison
+# =============================================================================
+
+
+class TestStableVsUnstable:
+    """Compare stable implementations against original unstable versions."""
+
+    @given(pyp_params(), sample_size_arrays)
+    def test_uniqueness_matches_unstable(self, params, n):
+        """Stable uniqueness matches unstable for non-edge cases."""
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d and d >= 0.01)  # Avoid edge cases
+        assume(np.all(n <= 1e8))  # Avoid extreme n values
+
+        stable = pyp_uniqueness(d, alpha, n)
+        unstable = pyp_uniqueness_unstable(d, alpha, n)
+
+        assert_allclose(stable, unstable, rtol=1e-6, atol=1e-10)
+
+    @given(pyp_params(), sample_size_arrays)
+    def test_correctness_matches_unstable(self, params, n):
+        """Stable correctness matches unstable for non-edge cases."""
+        d, alpha = params["d"], params["alpha"]
+        assume(alpha > -d and d >= 0.01)  # Avoid edge cases where unstable fails
+        assume(np.all(n <= 1e8))  # Avoid extreme n values
+
+        stable = pyp_correctness(d, alpha, n)
+        unstable = pyp_correctness_unstable(d, alpha, n)
+
+        assert_allclose(stable, unstable, rtol=1e-5, atol=1e-9)
+
+    def test_uniqueness_stable_at_small_d(self):
+        """Stable uniqueness handles small d values correctly."""
+        n = np.array([10, 100, 1000, 10000])
+        alpha = 1.0
+
+        # Test at progressively smaller d values
+        for d in [1e-3, 1e-6, 1e-9, 1e-12]:
+            result = pyp_uniqueness(d, alpha, n)
+            assert_bounded(result)
+            assert np.all(np.diff(result) <= 1e-10), f"Non-monotonic at d={d}"
+
+    def test_correctness_stable_at_small_d(self):
+        """Stable correctness handles small d values correctly."""
+        n = np.array([10, 100, 1000, 10000])
+        alpha = 1.0
+
+        # Test at progressively smaller d values
+        for d in [1e-3, 1e-6, 1e-9, 1e-12]:
+            result = pyp_correctness(d, alpha, n)
+            assert_bounded(result)
+            assert np.all(np.diff(result) <= 1e-10), f"Non-monotonic at d={d}"
+
+    def test_correctness_stable_at_large_n(self):
+        """Stable correctness handles large n values correctly."""
+        d, alpha = 0.5, 1.0
+        n = np.array([1, 10, 100, 1000, 10**6, 10**9])
+
+        result = pyp_correctness(d, alpha, n)
+        assert_bounded(result)
+        assert np.all(np.diff(result) <= 1e-10), "Non-monotonic at large n"
 
 
 # =============================================================================

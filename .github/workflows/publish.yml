@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ github.event.inputs.test_pypi == 'true' && 'testpypi' || 'pypi' }}
-      url: ${{ github.event.inputs.test_pypi == 'true' && 'https://test.pypi.org/p/dataless' || 'https://pypi.org/p/dataless' }}
+      url: ${{ github.event.inputs.test_pypi == 'true' && 'https://test.pypi.org/p/pydataless' || 'https://pypi.org/p/pydataless' }}
 
     steps:
     - name: Download build artifacts

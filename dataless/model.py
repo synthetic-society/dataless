@@ -38,7 +38,7 @@ def pyp_uniqueness(d, alpha, n: UnionInt):
 
     """
     rv = np.exp(gammaln(1 + alpha) - gammaln(d + alpha) + gammaln(n + d + alpha - 1) - gammaln(n + alpha))
-    return np.where(n <= 1, 1.0, rv)
+    return np.clip(np.where(n <= 1, 1.0, rv), 0.0, 1.0)
 
 
 def pyp_correctness(d, alpha, n: UnionInt):
@@ -60,7 +60,8 @@ def pyp_correctness(d, alpha, n: UnionInt):
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         # Use rv_null_d formula when d is very small to avoid numerical instability
-        return np.where(n <= 1, 1.0, np.where(d <= 1e-10, rv_null_d, np.divide(nom, (n * d))))
+        result = np.where(n <= 1, 1.0, np.where(d <= 1e-10, rv_null_d, np.divide(nom, (n * d))))
+        return np.clip(result, 0.0, 1.0)
 
 
 @np.vectorize
@@ -287,7 +288,7 @@ class FLModel(AbstractModel):
         """Calculate expected uniqueness for sample size n."""
         # (1 - 2^(-h))^(n-1) = exp((n-1) * log(1 - 2^(-h)))
         x = 2.0 ** (-self.h)
-        return np.exp(((n - 1) * np.log1p(-x)))
+        return np.clip(np.exp(((n - 1) * np.log1p(-x))), 0.0, 1.0)
 
     def correctness(self, n):
         """Calculate expected correctness for sample size n."""
@@ -298,7 +299,7 @@ class FLModel(AbstractModel):
         x = 2.0 ** (-self.h)
         stable_term = -np.expm1(n * np.log1p(-x))
 
-        return 2.0**self.h / n * stable_term
+        return np.clip(2.0**self.h / n * stable_term, 0.0, 1.0)
 
     def kanon_violations(self, n, k):
         """Not implemented for baseline model."""

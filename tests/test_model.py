@@ -225,6 +225,33 @@ class TestPYP:
         with pytest.raises(ParameterError):
             PYP(**kwargs)
 
+    @pytest.mark.parametrize(
+        "d,alpha",
+        [
+            (1.5, 1.0),  # d >= 1
+            (-0.1, 1.0),  # d < 0
+            (0.5, -1.0),  # alpha <= -d
+        ],
+    )
+    def test_init_invalid_d_alpha(self, d, alpha):
+        """PYP with invalid d/alpha raises ParameterError."""
+        with pytest.raises(ParameterError):
+            PYP(d=d, alpha=alpha)
+
+    @pytest.mark.parametrize(
+        "h,gamma",
+        [
+            (-1.0, 0.5),  # h <= 0
+            (0.0, 0.5),  # h == 0
+            (2.0, 1.5),  # gamma > 1
+            (2.0, -0.1),  # gamma < 0
+        ],
+    )
+    def test_init_invalid_h_gamma(self, h, gamma):
+        """PYP with invalid h/gamma raises ParameterError."""
+        with pytest.raises(ParameterError):
+            PYP(h=h, gamma=gamma)
+
     def test_properties(self):
         """PYP property calculations."""
         pyp = PYP(d=0.5, alpha=1.0)
